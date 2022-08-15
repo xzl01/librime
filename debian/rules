@@ -1,0 +1,19 @@
+#!/usr/bin/make -f
+
+# See dpkg-buildflags(1)
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+export DEB_CFLAGS_MAINT_APPEND  =
+
+%:
+	dh $@ --buildsystem=cmake
+
+override_dh_auto_configure:
+	dh_auto_configure -Scmake -- \
+	    -DCMAKE_BUILD_TYPE=Release \
+	    -DINSTALL_PRIVATE_HEADERS=ON \
+	    -DENABLE_EXTERNAL_PLUGINS=ON \
+	    -DBOOST_USE_CXX11=ON \
+	    -DBUILD_TEST=OFF
+
+override_dh_installchangelogs:
+	dh_installchangelogs -k CHANGELOG.md
