@@ -1,34 +1,52 @@
 RIME_ROOT ?= $(CURDIR)
 
+ifeq ($(shell uname),Darwin) # for macOS
+prefix ?= $(RIME_ROOT)/dist
+
+ifdef BOOST_ROOT
+CMAKE_BOOST_OPTIONS = -DBoost_NO_BOOST_CMAKE=TRUE \
+	-DBOOST_ROOT="$(BOOST_ROOT)"
+endif
+
+# https://cmake.org/cmake/help/latest/variable/CMAKE_OSX_SYSROOT.html
+export SDKROOT ?= $(shell xcrun --sdk macosx --show-sdk-path)
+
+# https://cmake.org/cmake/help/latest/envvar/MACOSX_DEPLOYMENT_TARGET.html
+export MACOSX_DEPLOYMENT_TARGET ?= 10.15
+
+ifdef BUILD_UNIVERSAL
+# https://cmake.org/cmake/help/latest/envvar/CMAKE_OSX_ARCHITECTURES.html
+export CMAKE_OSX_ARCHITECTURES = arm64;x86_64
+endif
+
+else # for Linux
 prefix ?= $(DESTDIR)/usr
+endif
+
+ifndef NOPARALLEL
+export MAKEFLAGS+=" -j$(( $(nproc) + 1)) "
+endif
 
 debug install-debug uninstall-debug test-debug: build ?= debug
 build ?= build
 
-.PHONY: all thirdparty xcode clean \
-librime librime-static install-librime uninstall-librime \
-release debug test install uninstall install-debug uninstall-debug
+.PHONY: all deps clean \
+librime librime-static \
+release debug test install uninstall \
+install-debug uninstall-debug
 
 all: release
 
-thirdparty:
-	make -f thirdparty.mk
+deps:
+	$(MAKE) -f deps.mk
 
-thirdparty/%:
-	make -f thirdparty.mk $(@:thirdparty/%=%)
-
-xcode:
-	make -f xcode.mk
-
-xcode/%:
-	make -f xcode.mk $(@:xcode/%=%)
+deps/%:
+	$(MAKE) -f deps.mk $(@:deps/%=%)
 
 clean:
 	rm -Rf build debug
 
 librime: release
-install-librime: install
-uninstall-librime: uninstall
 
 librime-static:
 	cmake . -B$(build) \
@@ -59,6 +77,7 @@ debug:
 	-DCMAKE_INSTALL_PREFIX=$(prefix) \
 	-DCMAKE_BUILD_TYPE=Debug \
 	-DBUILD_MERGED_PLUGINS=OFF \
+	-DALSO_LOG_TO_STDERR=ON \
 	-DENABLE_EXTERNAL_PLUGINS=ON
 	cmake --build $(build)
 
@@ -69,13 +88,13 @@ install-debug:
 	cmake --build $(build) --target install
 
 uninstall:
-	cmake --build $(build) --target uninstall
+	cmake --build $(build) --target remove
 
 uninstall-debug:
-	cmake --build $(build) --target uninstall
+	cmake --build $(build) --target remove
 
 test: release
-	(cd $(build)/test; ./rime_test)
+	(cd $(build); ctest --output-on-failure)
 
 test-debug: debug
-	(cd $(build)/test; ./rime_test)
+	(cd $(build); ctest --output-on-failure)

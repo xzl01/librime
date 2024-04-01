@@ -32,7 +32,7 @@ string Context::GetScriptText() const {
   return composition_.GetScriptText();
 }
 
-static const string kCaretSymbol("\xe2\x80\xb8");
+static const string kCaretSymbol("\xe2\x80\xb8");  // U+2038 ‸ CARET
 
 string Context::GetSoftCursor() const {
   return get_option("soft_cursor") ? kCaretSymbol : string();
@@ -43,7 +43,7 @@ Preedit Context::GetPreedit() const {
 }
 
 bool Context::IsComposing() const {
-  return !input_.empty();
+  return !input_.empty() || !composition_.empty();
 }
 
 bool Context::HasMenu() const {
@@ -63,8 +63,7 @@ bool Context::PushInput(char ch) {
   if (caret_pos_ >= input_.length()) {
     input_.push_back(ch);
     caret_pos_ = input_.length();
-  }
-  else {
+  } else {
     input_.insert(caret_pos_, 1, ch);
     ++caret_pos_;
   }
@@ -76,8 +75,7 @@ bool Context::PushInput(const string& str) {
   if (caret_pos_ >= input_.length()) {
     input_ += str;
     caret_pos_ = input_.length();
-  }
-  else {
+  } else {
     input_.insert(caret_pos_, str);
     caret_pos_ += str.length();
   }
@@ -123,17 +121,48 @@ bool Context::Select(size_t index) {
   return false;
 }
 
-bool Context::DeleteCurrentSelection() {
+bool Context::Highlight(size_t index) {
+  if (composition_.empty() || !composition_.back().menu)
+    return false;
+  Segment& seg(composition_.back());
+  size_t new_index = index;
+  size_t candidate_count = seg.menu->Prepare(index + 1);
+  if (index >= candidate_count) {
+    DLOG(INFO) << "selection index exceeds candidate pool, fallback to last";
+    new_index = candidate_count - 1;
+  }
+  size_t previous_index = seg.selected_index;
+  if (previous_index == new_index) {
+    DLOG(INFO) << "selection has not changed, currently at " << new_index;
+    return false;
+  }
+  seg.selected_index = new_index;
+  update_notifier_(this);
+  DLOG(INFO) << "selection changed from: " << previous_index << " to: " << new_index;
+  return true;
+}
+
+bool Context::DeleteCandidate(
+    function<an<Candidate>(Segment& seg)> get_candidate) {
   if (composition_.empty())
     return false;
   Segment& seg(composition_.back());
-  if (auto cand = seg.GetSelectedCandidate()) {
-    DLOG(INFO) << "Deleting: '" << cand->text()
-               << "', selected_index = " << seg.selected_index;
+  if (auto cand = get_candidate(seg)) {
+    DLOG(INFO) << "Deleting candidate: '" << cand->text();
     delete_notifier_(this);
     return true;  // CAVEAT: this doesn't mean anything is deleted for sure
   }
   return false;
+}
+
+bool Context::DeleteCandidate(size_t index) {
+  return DeleteCandidate(
+      [index](Segment& seg) { return seg.GetCandidateAt(index); });
+}
+
+bool Context::DeleteCurrentSelection() {
+  return DeleteCandidate(
+      [](Segment& seg) { return seg.GetSelectedCandidate(); });
 }
 
 bool Context::ConfirmCurrentSelection() {
@@ -144,8 +173,7 @@ bool Context::ConfirmCurrentSelection() {
   if (auto cand = seg.GetSelectedCandidate()) {
     DLOG(INFO) << "Confirmed: '" << cand->text()
                << "', selected_index = " << seg.selected_index;
-  }
-  else {
+  } else {
     if (seg.end == seg.start) {
       // fluid_editor will confirm the whole sentence
       return false;
@@ -260,8 +288,7 @@ bool Context::get_option(const string& name) const {
     return false;
 }
 
-void Context::set_property(const string& name,
-                           const string& value) {
+void Context::set_property(const string& name, const string& value) {
   properties_[name] = value;
   property_update_notifier_(this, name);
 }
@@ -276,13 +303,12 @@ string Context::get_property(const string& name) const {
 
 void Context::ClearTransientOptions() {
   auto opt = options_.lower_bound("_");
-  while (opt != options_.end() &&
-         !opt->first.empty() && opt->first[0] == '_') {
+  while (opt != options_.end() && !opt->first.empty() && opt->first[0] == '_') {
     options_.erase(opt++);
   }
   auto prop = properties_.lower_bound("_");
-  while (prop != properties_.end() &&
-         !prop->first.empty() && prop->first[0] == '_') {
+  while (prop != properties_.end() && !prop->first.empty() &&
+         prop->first[0] == '_') {
     properties_.erase(prop++);
   }
 }

@@ -1,3 +1,155 @@
+<a name="1.10.0"></a>
+# [1.10.0](https://github.com/rime/librime/compare/1.9.0...1.10.0) (2024-02-09)
+
+
+### Bug Fixes
+
+* **chord_composer:** stop at super and caps by default ([8709a7a](https://github.com/rime/librime/commit/8709a7a))
+* **path:** convert to native encoding on Windows ([#806](https://github.com/rime/librime/issues/806)) ([6546689](https://github.com/rime/librime/commit/6546689)), closes [#804](https://github.com/rime/librime/issues/804) [rime/weasel#576](https://github.com/rime/weasel/issues/576) [rime/weasel#1080](https://github.com/rime/weasel/issues/1080)
+* don't compress the token during collecting dict entries ([#762](https://github.com/rime/librime/issues/762)) ([#768](https://github.com/rime/librime/issues/768)) ([767ebad](https://github.com/rime/librime/commit/767ebad))
+
+
+### Features
+
+* **api:** highlight_candidate*, change_page ([142902d](https://github.com/rime/librime/commit/142902d)), closes [#620](https://github.com/rime/librime/issues/620)
+* **engine:** translate zero-length prediction ([8f2e8d6](https://github.com/rime/librime/commit/8f2e8d6))
+* **key_binder:** add `when: predicting` condition ([#751](https://github.com/rime/librime/issues/751)) ([3bc65c9](https://github.com/rime/librime/commit/3bc65c9))
+* **rime_api:** add RimeApi::set_input ([#771](https://github.com/rime/librime/issues/771)) ([de12d6a](https://github.com/rime/librime/commit/de12d6a)), closes [#547](https://github.com/rime/librime/issues/547)
+* add reload command for rime_api_console ([#741](https://github.com/rime/librime/issues/741)) ([9b2689b](https://github.com/rime/librime/commit/9b2689b))
+
+
+### Performance Improvements
+
+* less nest in filesystem iteration When CleanOldLogFiles::Run ([#801](https://github.com/rime/librime/issues/801)) ([9ec1711](https://github.com/rime/librime/commit/9ec1711))
+
+
+### BREAKING CHANGES
+
+* **path:** Most `string` filenames in APIs are changed to `path`;
+`installation.yaml` should be UTF-8 encoded.
+
+Previouly on Windows, the file can be written in local encoding to
+enable paths with non-ASCII characters. It should be updated to UTF-8
+after this change.
+
+Details of the code refactor
+
+Wrap `std::filesystem::path` in a thin wrapper class `rime::path` which calls `std::filesystem::u8path` in the constructor on Windows.
+
+Operator `/=` and `/` are also overloaded to convert the right operand from UTF-8 string to native path.
+
+Follow these rules to apply correct conversion between `string` and `rime::path`:
+
+- construct `rime::path` with UTF-8 encoded string;
+- get native string by `path::u8string`;
+- to extract UTF-8 string from `path`, for example to find schema ID from file name, call `path::u8string`;
+- avoid implicit conversion from string, which results in `std::filesystem::path` without performing UTF-8 to native conversion;
+- explicitly construct `rime::path` from `std::filesystem::path` before append operation, to ensure the overloaded operator with string conversion is used.
+
+
+
+<a name="1.9.0"></a>
+# [1.9.0](https://github.com/rime/librime/compare/1.8.5...1.9.0) (2023-09-16)
+
+
+### Bug Fixes
+
+* avoid invalid page_size ([#679](https://github.com/rime/librime/issues/679)) ([53ce306](https://github.com/rime/librime/commit/53ce306))
+
+
+### Features
+
+* add `append_comment` option to `reverse_lookup_filter` ([#699](https://github.com/rime/librime/issues/699)) ([f079c3c](https://github.com/rime/librime/commit/f079c3c))
+* **dict:** shorten the data struct used by Vocabulary ([210ab6c](https://github.com/rime/librime/commit/210ab6c))
+* **switches:** abbreviate state labels ([45cd64b](https://github.com/rime/librime/commit/45cd64b))
+
+
+### Performance Improvements
+
+* release memory of temporary fields ([#690](https://github.com/rime/librime/issues/690)) ([43ae3a9](https://github.com/rime/librime/commit/43ae3a9))
+* replace rbtree with vector of pair ([#684](https://github.com/rime/librime/issues/684)) ([c515afb](https://github.com/rime/librime/commit/c515afb))
+* **dict:** improve dict complile performance ([#663](https://github.com/rime/librime/issues/663)) ([bd3c7c7](https://github.com/rime/librime/commit/bd3c7c7))
+
+
+
+<a name="1.8.5"></a>
+## [1.8.5](https://github.com/rime/librime/compare/1.8.4...1.8.5) (2023-02-05)
+
+
+### Bug Fixes
+
+* **selector:** do not match fallback modifier ([21adf97](https://github.com/rime/librime/commit/21adf97)), closes [#609](https://github.com/rime/librime/issues/609)
+
+
+
+<a name="1.8.4"></a>
+## [1.8.4](https://github.com/rime/librime/compare/1.8.3...1.8.4) (2023-01-30)
+
+
+
+<a name="1.8.3"></a>
+## [1.8.3](https://github.com/rime/librime/compare/1.8.2...1.8.3) (2023-01-25)
+
+
+### Bug Fixes
+
+* skip key combos with super modifier ([80bef8f](https://github.com/rime/librime/commit/80bef8f)), closes [#458](https://github.com/rime/librime/issues/458)
+
+
+
+<a name="1.8.2"></a>
+## [1.8.2](https://github.com/rime/librime/compare/1.8.1...1.8.2) (2023-01-25)
+
+
+
+<a name="1.8.1"></a>
+## [1.8.1](https://github.com/rime/librime/compare/1.8.0...1.8.1) (2023-01-25)
+
+
+
+<a name="1.8.0"></a>
+# [1.8.0](https://github.com/rime/librime/compare/1.7.3...1.8.0) (2023-01-25)
+
+
+### Bug Fixes
+
+* **algo, dict:** add an extra set of parenthesis to std::min ... ([f66d330](https://github.com/rime/librime/commit/f66d330))
+* **charset_filter:** Update `is_extended_cjk` to compatible with Unicode 15 ([946e852](https://github.com/rime/librime/commit/946e852))
+* **chord_composer:** first key missing from raw input ([33d85ad](https://github.com/rime/librime/commit/33d85ad))
+* **chord_composer:** invisible placeholder char prepended to output ([0ec7a2d](https://github.com/rime/librime/commit/0ec7a2d))
+* **ci:** download and extract boost ([200e3ec](https://github.com/rime/librime/commit/200e3ec))
+* **ci:** install Rime plugins' dependencies ([7677dae](https://github.com/rime/librime/commit/7677dae))
+* **ci:** no hardcoded boost version in ci scripts ([3ae72a3](https://github.com/rime/librime/commit/3ae72a3))
+* **dict_compiler:** shrink .reverse.bin file to fit after build ([2af37e0](https://github.com/rime/librime/commit/2af37e0))
+* **reverse_lookup_dictionary:** writing data to overflow buffer ([46e3066](https://github.com/rime/librime/commit/46e3066)), closes [#456](https://github.com/rime/librime/issues/456)
+* **setup:** avoid glog log macros conflict with macros of Windows ([24e1612](https://github.com/rime/librime/commit/24e1612))
+* fix missing control paths issue ([87e4c73](https://github.com/rime/librime/commit/87e4c73))
+* qualify std::exp after including <cmath> ([bc589fd](https://github.com/rime/librime/commit/bc589fd)), closes [#462](https://github.com/rime/librime/issues/462) [#476](https://github.com/rime/librime/issues/476)
+* **ci:** update ci script for windows ([0358a21](https://github.com/rime/librime/commit/0358a21))
+* **dictionary:** had unsorted chunks after the previous chunk ended ([dd6af3d](https://github.com/rime/librime/commit/dd6af3d)), closes [#507](https://github.com/rime/librime/issues/507)
+* **editor:** `back_syllable` should reopen selected words ([a3fdad8](https://github.com/rime/librime/commit/a3fdad8))
+* replace bintry mirror with jfrog ([a1203fc](https://github.com/rime/librime/commit/a1203fc))
+
+
+### Features
+
+* **api:** get_state_label returns the state label for UI display ([8f9e9c7](https://github.com/rime/librime/commit/8f9e9c7)), closes [#447](https://github.com/rime/librime/issues/447)
+* **ci:** add GitHub action ci support ([56e9d2a](https://github.com/rime/librime/commit/56e9d2a))
+* **ci:** add pull request ci ([94bb5d5](https://github.com/rime/librime/commit/94bb5d5))
+* **ci:** add tag release ci ([aafe5a3](https://github.com/rime/librime/commit/aafe5a3))
+* **context:** allow composing with zero input ([8e2826a](https://github.com/rime/librime/commit/8e2826a))
+* **key_binder:** single select a radio group option ([5e8aca2](https://github.com/rime/librime/commit/5e8aca2))
+* **key_binder:** toggle the switch defined at index `toggle: '@n'` ([6ca7803](https://github.com/rime/librime/commit/6ca7803)), closes [#554](https://github.com/rime/librime/issues/554)
+* **navigator,selector:** vertical navigation ([d79f6b3](https://github.com/rime/librime/commit/d79f6b3)), closes [#543](https://github.com/rime/librime/issues/543)
+* **plugins:** support plugin specs in slug@branch format ([7d11455](https://github.com/rime/librime/commit/7d11455))
+* **selector:** handle repeated key until release ([8d93e9f](https://github.com/rime/librime/commit/8d93e9f))
+* add windows ci job ([14ee47a](https://github.com/rime/librime/commit/14ee47a))
+* delete selected candidate ([#557](https://github.com/rime/librime/issues/557)) ([43023e1](https://github.com/rime/librime/commit/43023e1))
+* half/full-shape labels for more characters ([f2c7e40](https://github.com/rime/librime/commit/f2c7e40)), closes [#594](https://github.com/rime/librime/issues/594)
+* **simplifier:** can be configured to return empty comment ([#541](https://github.com/rime/librime/issues/541)) ([2368034](https://github.com/rime/librime/commit/2368034))
+
+
+
 <a name="1.7.3"></a>
 ## [1.7.3](https://github.com/rime/librime/compare/1.7.2...1.7.3) (2021-02-11)
 
@@ -65,7 +217,7 @@
 
 ### Bug Fixes
 
-* **ascii_composer:** do not comsume Shift key release ([debc2c0](https://github.com/rime/librime/commit/debc2c0))
+* **ascii_composer:** do not consume Shift key release ([debc2c0](https://github.com/rime/librime/commit/debc2c0))
 * **ascii_composer:** first read ascii_composer/good_old_caps_lock from schema config ([3fc56c4](https://github.com/rime/librime/commit/3fc56c4))
 * **chord_composer:** commit raw input with uppercase letters ([cc983d5](https://github.com/rime/librime/commit/cc983d5))
 * **CMakeLists.txt:** ensure paths in pkgconfig file are absolute ([0e96e51](https://github.com/rime/librime/commit/0e96e51))
@@ -420,14 +572,14 @@ known to be in use by osfans/trime.
   while source code compatibility is largely maintained with the exception
   of the aforementioned `RimeTraits` structure, rime 1.0 introduces a version
   controlled `RimeApi` structure which provides all the api functions.
-* **module:** suppport adding modules; modularize `gears` and `levers`.
-* **ticket:** used to instantiate compnents and to associate the instance with
+* **module:** support adding modules; modularize `gears` and `levers`.
+* **ticket:** used to instantiate components and to associate the instance with
   a name space in the configuration.
 * **encoder:** encode new phrases for `table_translator` and `script_translator`
   using different rules.
 * **affix_segmentor:** strip optional prefix and suffix from a code segment.
 * **reverse_lookup_filter:** lookup candidate text for code in a specified
-  dictonary.
+  dictionary.
 * **shape:** add full-shape support.
 * **key_binder:** switch input schemata and toggle options with hotkeys.
 * **switcher:** list input schemata ordered by recency; support radio options.
@@ -473,7 +625,7 @@ known to be in use by osfans/trime.
   properties when loading a different schema.
   `chord_composer` sets `_chord_typing` so that the input method program would
   know that a chord-typing schema is in use.
-* **deployment_tasks.cc(BackupConfigFiles::Run):** while synching user data,
+* **deployment_tasks.cc(BackupConfigFiles::Run):** while syncing user data,
   backup user created / modified YAML files.
 * **deployer.cc(Deployer::JoinMaintenanceThread):** fix a boost-related crash.
 
@@ -500,9 +652,9 @@ known to be in use by osfans/trime.
   `--add-schema`, `--set-active-schema`
 * **rime_dict_manager:** add command line option `--sync`
 * **rime_api.h (RimeSyncUserData):**
-  add API function to start a data synching task in maintenance thread.
+  add API function to start a data syncing task in maintenance thread.
 * **rime_api.h (RimeSetNotificationHandler):**
-  setup a callback function to receive notifcations from librime.
+  setup a callback function to receive notifications from librime.
 * **rime_api.h (RimeGetProperty, RimeSetProperty):**
   add API functions to access session specific string properties.
 * **config:** support subscript, assignment operators and simplified value accessors.

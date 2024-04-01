@@ -18,6 +18,7 @@
 #include <rime/segmentation.h>
 #include <rime/segmentor.h>
 #include <rime/switcher.h>
+#include <rime/switches.h>
 #include <rime/ticket.h>
 #include <rime/translation.h>
 #include <rime/translator.h>
@@ -51,6 +52,9 @@ class ConcreteEngine : public Engine {
   vector<of<Filter>> filters_;
   vector<of<Formatter>> formatters_;
   vector<of<Processor>> post_processors_;
+  // To make sure dumping user.yaml when processors_.clear(),
+  // switcher is owned by processors_[0]
+  weak<Switcher> switcher_;
 };
 
 // implementations
@@ -59,8 +63,7 @@ Engine* Engine::Create() {
   return new ConcreteEngine;
 }
 
-Engine::Engine() : schema_(new Schema), context_(new Context) {
-}
+Engine::Engine() : schema_(new Schema), context_(new Context) {}
 
 Engine::~Engine() {
   context_.reset();
@@ -70,10 +73,8 @@ Engine::~Engine() {
 ConcreteEngine::ConcreteEngine() {
   LOG(INFO) << "starting engine.";
   // receive context notifications
-  context_->commit_notifier().connect(
-      [this](Context* ctx) { OnCommit(ctx); });
-  context_->select_notifier().connect(
-      [this](Context* ctx) { OnSelect(ctx); });
+  context_->commit_notifier().connect([this](Context* ctx) { OnCommit(ctx); });
+  context_->select_notifier().connect([this](Context* ctx) { OnSelect(ctx); });
   context_->update_notifier().connect(
       [this](Context* ctx) { OnContextUpdate(ctx); });
   context_->option_update_notifier().connect(
@@ -97,16 +98,20 @@ bool ConcreteEngine::ProcessKey(const KeyEvent& key_event) {
   ProcessResult ret = kNoop;
   for (auto& processor : processors_) {
     ret = processor->ProcessKeyEvent(key_event);
-    if (ret == kRejected) break;
-    if (ret == kAccepted) return true;
+    if (ret == kRejected)
+      break;
+    if (ret == kAccepted)
+      return true;
   }
   // record unhandled keys, eg. spaces, numbers, bksp's.
   context_->commit_history().Push(key_event);
   // post-processing
   for (auto& processor : post_processors_) {
     ret = processor->ProcessKeyEvent(key_event);
-    if (ret == kRejected) break;
-    if (ret == kAccepted) return true;
+    if (ret == kRejected)
+      break;
+    if (ret == kAccepted)
+      return true;
   }
   // notify interested parties
   context_->unhandled_key_notifier()(context_.get(), key_event);
@@ -114,12 +119,14 @@ bool ConcreteEngine::ProcessKey(const KeyEvent& key_event) {
 }
 
 void ConcreteEngine::OnContextUpdate(Context* ctx) {
-  if (!ctx) return;
+  if (!ctx)
+    return;
   Compose(ctx);
 }
 
 void ConcreteEngine::OnOptionUpdate(Context* ctx, const string& option) {
-  if (!ctx) return;
+  if (!ctx)
+    return;
   LOG(INFO) << "updated option: " << option;
   // apply new option to active segment
   if (ctx->IsComposing()) {
@@ -132,7 +139,8 @@ void ConcreteEngine::OnOptionUpdate(Context* ctx, const string& option) {
 }
 
 void ConcreteEngine::OnPropertyUpdate(Context* ctx, const string& property) {
-  if (!ctx) return;
+  if (!ctx)
+    return;
   LOG(INFO) << "updated property: " << property;
   // notification
   string value = ctx->get_property(property);
@@ -141,7 +149,8 @@ void ConcreteEngine::OnPropertyUpdate(Context* ctx, const string& property) {
 }
 
 void ConcreteEngine::Compose(Context* ctx) {
-  if (!ctx) return;
+  if (!ctx)
+    return;
   Composition& comp = ctx->composition();
   const string active_input = ctx->input().substr(0, ctx->caret_pos());
   DLOG(INFO) << "active input: " << active_input;
@@ -153,10 +162,12 @@ void ConcreteEngine::Compose(Context* ctx) {
   }
   CalculateSegmentation(&comp);
   TranslateSegments(&comp);
-  DLOG(INFO) << "composition: " << comp.GetDebugText();
+  DLOG(INFO) << "composition: [" << comp.GetDebugText() << "]";
 }
 
 void ConcreteEngine::CalculateSegmentation(Segmentation* segments) {
+  DLOG(INFO) << "CalculateSegmentation, segments: " << segments->size()
+             << ", finished? " << segments->HasFinishedSegmentation();
   while (!segments->HasFinishedSegmentation()) {
     size_t start_pos = segments->GetCurrentStartPosition();
     size_t end_pos = segments->GetCurrentEndPosition();
@@ -180,27 +191,29 @@ void ConcreteEngine::CalculateSegmentation(Segmentation* segments) {
       segments->Forward();
   }
   // start an empty segment only at the end of a confirmed composition.
-  segments->Trim();
+  if (!segments->empty() && !segments->back().HasTag("placeholder"))
+    segments->Trim();
   if (!segments->empty() && segments->back().status >= Segment::kSelected)
     segments->Forward();
 }
 
 void ConcreteEngine::TranslateSegments(Segmentation* segments) {
+  DLOG(INFO) << "TranslateSegments: " << *segments;
   for (Segment& segment : *segments) {
+    DLOG(INFO) << "segment [" << segment.start << ", " << segment.end
+               << "), status: " << segment.status;
     if (segment.status >= Segment::kGuess)
       continue;
     size_t len = segment.end - segment.start;
-    if (len == 0)
-      continue;
     string input = segments->input().substr(segment.start, len);
-    DLOG(INFO) << "translating segment: " << input;
+    DLOG(INFO) << "translating segment: [" << input << "]";
     auto menu = New<Menu>();
     for (auto& translator : translators_) {
       auto translation = translator->Query(input, segment);
       if (!translation)
         continue;
       if (translation->exhausted()) {
-        LOG(INFO) << "Oops, got a futile translation.";
+        DLOG(INFO) << translator->name_space() << " made a futile translation.";
         continue;
       }
       menu->AddTranslation(translation);
@@ -252,16 +265,14 @@ void ConcreteEngine::OnSelect(Context* ctx) {
       ctx->Commit();
     else
       ctx->composition().Forward();
-  }
-  else {
+  } else {
     bool reached_caret_pos = (seg.end >= ctx->caret_pos());
     ctx->composition().Forward();
     if (reached_caret_pos) {
       // finished converting current segment
       // move caret to the end of input
       ctx->set_caret_pos(ctx->input().length());
-    }
-    else {
+    } else {
       Compose(ctx);
     }
   }
@@ -270,6 +281,14 @@ void ConcreteEngine::OnSelect(Context* ctx) {
 void ConcreteEngine::ApplySchema(Schema* schema) {
   if (!schema)
     return;
+  if (auto switcher = switcher_.lock()) {
+    if (Config* user_config = switcher->user_config()) {
+      user_config->SetString("var/previously_selected_schema",
+                             schema->schema_id());
+      user_config->SetInt("var/schema_access_time/" + schema->schema_id(),
+                          time(NULL));
+    }
+  }
   schema_.reset(schema);
   context_->Clear();
   context_->ClearTransientOptions();
@@ -285,6 +304,7 @@ void ConcreteEngine::InitializeComponents() {
   filters_.clear();
 
   if (auto switcher = New<Switcher>(this)) {
+    switcher_ = switcher;
     processors_.push_back(switcher);
     if (schema_->schema_id() == ".default") {
       if (Schema* schema = switcher->CreateSchema()) {
@@ -307,8 +327,7 @@ void ConcreteEngine::InitializeComponents() {
       if (auto c = Processor::Require(ticket.klass)) {
         an<Processor> p(c->Create(ticket));
         processors_.push_back(p);
-      }
-      else {
+      } else {
         LOG(ERROR) << "error creating processor: '" << ticket.klass << "'";
       }
     }
@@ -324,8 +343,7 @@ void ConcreteEngine::InitializeComponents() {
       if (auto c = Segmentor::Require(ticket.klass)) {
         an<Segmentor> s(c->Create(ticket));
         segmentors_.push_back(s);
-      }
-      else {
+      } else {
         LOG(ERROR) << "error creating segmentor: '" << ticket.klass << "'";
       }
     }
@@ -341,8 +359,7 @@ void ConcreteEngine::InitializeComponents() {
       if (auto c = Translator::Require(ticket.klass)) {
         an<Translator> t(c->Create(ticket));
         translators_.push_back(t);
-      }
-      else {
+      } else {
         LOG(ERROR) << "error creating translator: '" << ticket.klass << "'";
       }
     }
@@ -358,8 +375,7 @@ void ConcreteEngine::InitializeComponents() {
       if (auto c = Filter::Require(ticket.klass)) {
         an<Filter> f(c->Create(ticket));
         filters_.push_back(f);
-      }
-      else {
+      } else {
         LOG(ERROR) << "error creating filter: '" << ticket.klass << "'";
       }
     }
@@ -368,16 +384,14 @@ void ConcreteEngine::InitializeComponents() {
   if (auto c = Formatter::Require("shape_formatter")) {
     an<Formatter> f(c->Create(Ticket(this)));
     formatters_.push_back(f);
-  }
-  else {
+  } else {
     LOG(WARNING) << "shape_formatter not available.";
   }
   // create post-processors
   if (auto c = Processor::Require("shape_processor")) {
     an<Processor> p(c->Create(Ticket(this)));
     post_processors_.push_back(p);
-  }
-  else {
+  } else {
     LOG(WARNING) << "shape_processor not available.";
   }
 }
@@ -385,31 +399,19 @@ void ConcreteEngine::InitializeComponents() {
 void ConcreteEngine::InitializeOptions() {
   // reset custom switches
   Config* config = schema_->config();
-  if (auto switches = config->GetList("switches")) {
-    for (size_t i = 0; i < switches->size(); ++i) {
-      auto item = As<ConfigMap>(switches->GetAt(i));
-      if (!item)
-        continue;
-      auto reset_value = item->GetValue("reset");
-      if (!reset_value)
-        continue;
-      int value = 0;
-      reset_value->GetInt(&value);
-      if (auto option_name = item->GetValue("name")) {
-        // toggle
-        context_->set_option(option_name->str(), (value != 0));
-      }
-      else if (auto options = As<ConfigList>(item->Get("options"))) {
-        // radio
-        for (size_t i = 0; i < options->size(); ++i) {
-          if (auto option_name = options->GetValueAt(i)) {
-            context_->set_option(option_name->str(),
-                                 static_cast<int>(i) == value);
-          }
-        }
+  Switches switches(config);
+  switches.FindOption([this](Switches::SwitchOption option) {
+    if (option.reset_value >= 0) {
+      if (option.type == Switches::kToggleOption) {
+        context_->set_option(option.option_name, (option.reset_value != 0));
+      } else if (option.type == Switches::kRadioGroup) {
+        context_->set_option(
+            option.option_name,
+            static_cast<int>(option.option_index) == option.reset_value);
       }
     }
-  }
+    return Switches::kContinue;
+  });
 }
 
 }  // namespace rime

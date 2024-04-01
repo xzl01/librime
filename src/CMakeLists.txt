@@ -14,8 +14,7 @@ endif()
 set(rime_core_module_src
   ${rime_api_src}
   ${rime_base_src}
-  ${rime_config_src}
-  ${rime_proto_objs})
+  ${rime_config_src})
 set(rime_dict_module_src
   ${rime_algo_src}
   ${rime_dict_src})
@@ -42,7 +41,6 @@ endif()
 
 set(rime_core_deps
     ${Boost_LIBRARIES}
-    CapnProto::capnp
     ${Glog_LIBRARY}
     ${YamlCpp_LIBRARY}
     ${CMAKE_THREAD_LIBS_INIT}
@@ -57,7 +55,9 @@ set(rime_gears_deps
 set(rime_levers_deps "")
 
 if(MINGW)
-  set(rime_core_deps ${rime_core_deps} wsock32 ws2_32)
+  # fix: bcrypt for boost uuid issue
+  # https://github.com/boostorg/uuid/issues/68
+  set(rime_core_deps ${rime_core_deps} wsock32 ws2_32 bcrypt)
 endif()
 
 if(BUILD_SEPARATE_LIBS)
