@@ -7,7 +7,6 @@
 #define RIME_CONFIG_DATA_H_
 
 #include <iostream>
-#include <yaml-cpp/yaml.h>
 #include <rime/common.h>
 
 namespace rime {
@@ -22,8 +21,8 @@ class ConfigData {
 
   bool LoadFromStream(std::istream& stream);
   bool SaveToStream(std::ostream& stream);
-  bool LoadFromFile(const string& file_name, ConfigCompiler* compiler);
-  bool SaveToFile(const string& file_name);
+  bool LoadFromFile(const path& file_path, ConfigCompiler* compiler);
+  bool SaveToFile(const path& file_path);
   bool TraverseWrite(const string& path, an<ConfigItem> item);
   an<ConfigItem> Traverse(const string& path);
 
@@ -31,10 +30,11 @@ class ConfigData {
   static string JoinPath(const vector<string>& keys);
   static bool IsListItemReference(const string& key);
   static string FormatListIndex(size_t index);
-  static size_t ResolveListIndex(an<ConfigItem> list, const string& key,
+  static size_t ResolveListIndex(an<ConfigItem> list,
+                                 const string& key,
                                  bool read_only = false);
 
-  const string& file_name() const { return file_name_; }
+  const path& file_path() const { return file_path_; }
   bool modified() const { return modified_; }
   void set_modified() { modified_ = true; }
   void set_auto_save(bool auto_save) { auto_save_ = auto_save; }
@@ -42,15 +42,7 @@ class ConfigData {
   an<ConfigItem> root;
 
  protected:
-  static an<ConfigItem> ConvertFromYaml(const YAML::Node& yaml_node,
-                                        ConfigCompiler* compiler);
-  static void EmitYaml(an<ConfigItem> node,
-                       YAML::Emitter* emitter,
-                       int depth);
-  static void EmitScalar(const string& str_value,
-                         YAML::Emitter* emitter);
-
-  string file_name_;
+  path file_path_;
   bool modified_ = false;
   bool auto_save_ = false;
 };

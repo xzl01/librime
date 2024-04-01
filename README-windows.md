@@ -5,15 +5,9 @@
 `librime` is tested to work on Windows with the following combinations of build
 tools and libraries:
 
-  - Visual Studio 2017
-  - [Boost](http://www.boost.org/)=1.64
-  - [cmake](http://www.cmake.org/)>=3.8
-
-and
-
-  - Visual Studio 2015
-  - [Boost](http://www.boost.org/)=1.60
-  - [cmake](http://www.cmake.org/)>=3.8
+  - Visual Studio 2022 or LLVM 16
+  - [Boost](http://www.boost.org/)=1.83
+  - [cmake](http://www.cmake.org/)>=3.10
 
 Boost and cmake versions need to match higher VS version.
 
@@ -45,10 +39,10 @@ build.bat boost
 ## Build third-party libraries
 
 ``` batch
-build.bat thirdparty
+build.bat deps
 ```
-This builds dependent libraries in `thirdparty\src\*`, and copies artifacts to
-`thirdparty\lib` and `thirdparty\bin`.
+This builds dependent libraries in `librime\deps\*`, and copies artifacts to
+`librime\include`, `librime\lib` and `librime\bin`.
 
 ## Build librime
 

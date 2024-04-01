@@ -7,6 +7,12 @@
 #include <set>
 #include <cstring>
 
+#ifdef __GNUC__
+#define LUAWRAPPER_LOCAL __attribute__((visibility("hidden")))
+#else
+#define LUAWRAPPER_LOCAL
+#endif
+
 extern "C" {
 #include <lua.h>
 #include <lualib.h>
@@ -24,7 +30,7 @@ extern "C" {
 // not rely on destructors. Instead the resources should be registered
 // here, so that they can be freed outside the call when exception
 // happens.
-class C_State {
+class LUAWRAPPER_LOCAL C_State {
   struct B {
     virtual ~B() {};
   };
@@ -47,16 +53,36 @@ public:
   }
 };
 
+struct LUAWRAPPER_LOCAL LuaTypeInfo {
+  const std::type_info *ti;
+  size_t hash;
+
+  template<typename T>
+  static const LuaTypeInfo &make() {
+    auto &i = typeid(T);
+    static LuaTypeInfo r = {&i, i.hash_code()};
+    return r;
+  }
+
+  const char *name() const {
+    return ti->name();
+  }
+
+  bool operator==(const LuaTypeInfo &o) const {
+    return hash == o.hash && *ti == *o.ti;
+  }
+};
+
 //--- LuaType
 // Generic case (includes pointers)
 template<typename T>
-struct LuaType {
-  static const char *name() {
-    return typeid(LuaType<T>).name();
+struct LUAWRAPPER_LOCAL LuaType {
+  static const LuaTypeInfo *type() {
+    return &LuaTypeInfo::make<LuaType<T>>();
   }
 
   static int gc(lua_State *L) {
-    T *o = (T *) luaL_checkudata(L, 1, name());
+    T *o = (T *) luaL_checkudata(L, 1, type()->name());
     o->~T();
     return 0;
   }
@@ -94,15 +120,16 @@ struct LuaType {
 
     void *u = lua_newuserdata(L, sizeof(T));
     new(u) T(o);
-    luaL_getmetatable(L, name());
+    luaL_getmetatable(L, type()->name());
     if (lua_isnil(L, -1)) {
       // If T is not registered,
       // registers a "__gc" to prevent memory leaks.
       lua_pop(L, 1);
-      luaL_newmetatable(L, name());
-      lua_pushstring(L, "__gc");
+      luaL_newmetatable(L, type()->name());
+      lua_pushlightuserdata(L, (void *) type());
+      lua_setfield(L, -2, "type");
       lua_pushcfunction(L, gc);
-      lua_settable(L, -3);
+      lua_setfield(L, -2, "__gc");
     }
     lua_setmetatable(L, -2);
   }
@@ -111,20 +138,21 @@ struct LuaType {
     typedef typename std::remove_const<T>::type U;
 
     if (lua_getmetatable(L, i)) {
-      lua_getfield(L, -1, "name");
-      const char *tname = luaL_checkstring(L, -1);
-      void *_p = lua_touserdata(L, i);
-      if (strcmp(tname, name()) == 0 ||
-          strcmp(tname, LuaType<U>::name()) == 0) {
-        auto o = (T *) _p;
-        lua_pop(L, 2);
-        return *o;
+      lua_getfield(L, -1, "type");
+      auto ttype = (const LuaTypeInfo *) lua_touserdata(L, -1);
+      if (ttype) {
+        void *_p = lua_touserdata(L, i);
+        if (*ttype == *type() ||
+            *ttype == *LuaType<U>::type()) {
+          auto o = (T *) _p;
+          lua_pop(L, 2);
+          return *o;
+        }
       }
-
       lua_pop(L, 2);
     }
 
-    const char *msg = lua_pushfstring(L, "%s expected", name());
+    const char *msg = lua_pushfstring(L, "%s expected", type()->name());
     luaL_argerror(L, i, msg);
     abort(); // unreachable
   }
@@ -133,62 +161,63 @@ struct LuaType {
 // References
 template<typename T>
 struct LuaType<T &> {
-  static const char *name() {
-    return typeid(LuaType<T &>).name();
+  static const LuaTypeInfo *type() {
+    return &LuaTypeInfo::make<LuaType<T &>>();
   }
 
   static void pushdata(lua_State *L, T &o) {
     T **u = (T**) lua_newuserdata(L, sizeof(T *));
     *u = std::addressof(o);
-    luaL_setmetatable(L, name());
+    luaL_setmetatable(L, type()->name());
   }
 
   static T &todata(lua_State *L, int i, C_State * = NULL) {
     typedef typename std::remove_const<T>::type U;
 
     if (lua_getmetatable(L, i)) {
-      lua_getfield(L, -1, "name");
-      const char *tname = luaL_checkstring(L, -1);
-      void *_p = lua_touserdata(L, i);
-      if (strcmp(tname, name()) == 0 ||
-          strcmp(tname, LuaType<U &>::name()) == 0) {
-        auto po = (T **) _p;
-        lua_pop(L, 2);
-        return **po;
-      }
+      lua_getfield(L, -1, "type");
+      auto ttype = (const LuaTypeInfo *) lua_touserdata(L, -1);
+      if (ttype) {
+        void *_p = lua_touserdata(L, i);
+        if (*ttype == *type() ||
+            *ttype == *LuaType<U &>::type()) {
+          auto po = (T **) _p;
+          lua_pop(L, 2);
+          return **po;
+        }
 
-      if (strcmp(tname, LuaType<std::shared_ptr<T>>::name()) == 0 ||
-          strcmp(tname, LuaType<std::shared_ptr<U>>::name()) == 0) {
-        auto ao = (std::shared_ptr<T> *) _p;
-        lua_pop(L, 2);
-        return *(*ao).get();
-      }
+        if (*ttype == *LuaType<std::shared_ptr<T>>::type() ||
+            *ttype == *LuaType<std::shared_ptr<U>>::type()) {
+          auto ao = (std::shared_ptr<T> *) _p;
+          lua_pop(L, 2);
+          return *(*ao).get();
+        }
 
-      if (strcmp(tname, LuaType<std::unique_ptr<T>>::name()) == 0 ||
-          strcmp(tname, LuaType<std::unique_ptr<U>>::name()) == 0) {
-        auto ao = (std::unique_ptr<T> *) _p;
-        lua_pop(L, 2);
-        return *(*ao).get();
-      }
+        if (*ttype == *LuaType<std::unique_ptr<T>>::type() ||
+            *ttype == *LuaType<std::unique_ptr<U>>::type()) {
+          auto ao = (std::unique_ptr<T> *) _p;
+          lua_pop(L, 2);
+          return *(*ao).get();
+        }
 
-      if (strcmp(tname, LuaType<T *>::name()) == 0 ||
-          strcmp(tname, LuaType<U *>::name()) == 0) {
-        auto p = (T **) _p;
-        lua_pop(L, 2);
-        return **p;
-      }
+        if (*ttype == *LuaType<T *>::type() ||
+            *ttype == *LuaType<U *>::type()) {
+          auto p = (T **) _p;
+          lua_pop(L, 2);
+          return **p;
+        }
 
-      if (strcmp(tname, LuaType<T>::name()) == 0 ||
-          strcmp(tname, LuaType<U>::name()) == 0) {
-        auto o = (T *) _p;
-        lua_pop(L, 2);
-        return *o;
+        if (*ttype == *LuaType<T>::type() ||
+            *ttype == *LuaType<U>::type()) {
+          auto o = (T *) _p;
+          lua_pop(L, 2);
+          return *o;
+        }
       }
-
       lua_pop(L, 2);
     }
 
-    const char *msg = lua_pushfstring(L, "%s expected", name());
+    const char *msg = lua_pushfstring(L, "%s expected", type()->name());
     luaL_argerror(L, i, msg);
     abort(); // unreachable
   }
@@ -198,28 +227,34 @@ template<typename T>
 struct LuaType<std::unique_ptr<T>> {
   using UT = std::unique_ptr<T>;
 
-  static const char *name() {
-    return typeid(LuaType<UT>).name();
+  static const LuaTypeInfo *type() {
+    return &LuaTypeInfo::make<LuaType<UT>>();
   }
 
   static int gc(lua_State *L) {
-    UT *o = (UT *) luaL_checkudata(L, 1, name());
+    UT *o = (UT *) luaL_checkudata(L, 1, type()->name());
     o->~UT();
     return 0;
   }
 
   static void pushdata(lua_State *L, UT &o) {
+    if (!o) {
+      lua_pushnil(L);
+      return;
+    }
+
     void *u = lua_newuserdata(L, sizeof(UT));
     new(u) UT(std::move(o));
-    luaL_getmetatable(L, name());
+    luaL_getmetatable(L, type()->name());
     if (lua_isnil(L, -1)) {
       // If T is not registered,
       // registers a "__gc" to prevent memory leaks.
       lua_pop(L, 1);
-      luaL_newmetatable(L, name());
-      lua_pushstring(L, "__gc");
+      luaL_newmetatable(L, type()->name());
+      lua_pushlightuserdata(L, (void *) type());
+      lua_setfield(L, -2, "type");
       lua_pushcfunction(L, gc);
-      lua_settable(L, -3);
+      lua_setfield(L, -2, "__gc");
     }
     lua_setmetatable(L, -2);
   }
@@ -390,6 +425,13 @@ struct LuaType<const std::vector<T>> : LuaType<std::vector<T>> {};
 template<typename T>
 struct LuaType<const std::vector<T> &> : LuaType<std::vector<T>> {};
 
+template<>
+struct LuaType<decltype(nullptr)> {
+  static void pushdata(lua_State *L, decltype(nullptr) o) {
+    lua_pushnil(L);
+  }
+};
+
 // Helper function for pushing a series of data
 static void pushdataX(lua_State *L) {}
 
@@ -496,7 +538,7 @@ LuaResult<void> Lua::void_call(I ... input) {
 // WRAPMEM_GET/SET(C::f): wraps member variable C::f
 
 template<typename F, F f>
-struct LuaWrapper;
+struct LUAWRAPPER_LOCAL LuaWrapper;
 
 // LuaWrapper: R(*)(T...) -> int (*)(lua_State *)
 template<typename S, typename... T, S(*f)(T...)>
@@ -553,60 +595,109 @@ struct LuaWrapper<S(*)(T...), f> {
   }
 
   static int wrap(lua_State *L) {
-    char room[sizeof(C_State)];
-    C_State *C = new (&room) C_State();
-    lua_pushcfunction(L, wrap_helper);
-    lua_insert(L, 1);
-    lua_pushlightuserdata(L, (void *) C);
-    lua_insert(L, 2);
-    int status = lua_pcall(L, lua_gettop(L) - 1, LUA_MULTRET, 0);
-    if (status != LUA_OK) {
-      C->~C_State();
-      lua_error(L);
-      abort(); // unreachable
-    }
-    C->~C_State();
-    return lua_gettop(L);
+    return LuaImpl::wrap_common(L, wrap_helper);
   }
 };
 
 // MemberWrapper: R (C::*)(T..) -> R (C &, T...)
-// MemberWrapper(get variable): R (C::*) -> R (C &)
-// MemberWrapper(set variable): R (C::*) -> void (C &, R)
+// MemberWrapperV(get variable): R (C::*) -> R (C &)
+// MemberWrapperV(set variable): R (C::*) -> void (C &, R)
 template<typename F, F f>
-struct MemberWrapper;
+struct LUAWRAPPER_LOCAL MemberWrapper;
 
 template<typename R, typename C, typename... T, R (C::*f)(T...)>
 struct MemberWrapper<R (C::*)(T...), f> {
-  static R wrap(C &c, T... t) {
+  template<typename D>
+  static R wrapT(D &c, T... t) {
     return (c.*f)(t...);
+  }
+
+  static R wrap(C &c, T... t) {
+    return wrapT<C>(c, t...);
   }
 };
 
 template<typename R, typename C, typename... T, R (C::*f)(T...) const>
 struct MemberWrapper<R (C::*)(T...) const, f> {
-  static R wrap(const C &c, T... t) {
+  template<typename D>
+  static R wrapT(const D &c, T... t) {
     return (c.*f)(t...);
+  }
+
+  static R wrap(const C &c, T... t) {
+    return wrapT<C>(c, t...);
   }
 };
 
+#if __cplusplus >= 201703L || _MSVC_LANG >= 201703L
+template<typename R, typename C, typename... T, R (C::*f)(T...) noexcept>
+struct MemberWrapper<R (C::*)(T...) noexcept, f> {
+  template<typename D>
+  static R wrapT(D &c, T... t) {
+    return (c.*f)(t...);
+  }
+
+  static R wrap(C &c, T... t) {
+    return wrapT<C>(c, t...);
+  }
+};
+
+template<typename R, typename C, typename... T, R (C::*f)(T...) const noexcept>
+struct MemberWrapper<R (C::*)(T...) const noexcept, f> {
+  template<typename D>
+  static R wrapT(const D &c, T... t) {
+    return (c.*f)(t...);
+  }
+
+  static R wrap(const C &c, T... t) {
+    return wrapT<C>(c, t...);
+  }
+};
+#endif
+
+template<typename F, F f>
+struct LUAWRAPPER_LOCAL MemberWrapperV;
+
 template<typename R, typename C, R C::*f>
-struct MemberWrapper<R (C::*), f> {
-  static R wrap_get(const C &c) {
+struct MemberWrapperV<R (C::*), f> {
+  template<typename D>
+  static R wrapT_get(const D &c) {
     return c.*f;
   }
 
-  static void wrap_set(C &c, R r) {
+  template<typename D>
+  static void wrapT_set(D &c, R r) {
     c.*f = r;
+  }
+
+  static R wrap_get(const C &c) {
+    return wrapT_get<C>(c);
+  }
+
+  static void wrap_set(C &c, R r) {
+    return wrapT_set<C>(c, r);
   }
 };
 
+#define WRAP_PP_GET3(a1, a2, a3, ...) a3
+#define WRAP_FIX_MSVC(...) __VA_ARGS__
+#define WRAP_PP_CHOOSE(F, ...) WRAP_FIX_MSVC(WRAP_PP_GET3(__VA_ARGS__, F##_2, F##_1))
+
 #define WRAP(f) (&(LuaWrapper<decltype(&f), &f>::wrap))
-#define WRAPMEM(f) (&(LuaWrapper<decltype(&MemberWrapper<decltype(&f), &f>::wrap), \
-                                          &MemberWrapper<decltype(&f), &f>::wrap>::wrap))
-#define WRAPMEM_GET(f) (&(LuaWrapper<decltype(&MemberWrapper<decltype(&f), &f>::wrap_get), \
-                                              &MemberWrapper<decltype(&f), &f>::wrap_get>::wrap))
-#define WRAPMEM_SET(f) (&(LuaWrapper<decltype(&MemberWrapper<decltype(&f), &f>::wrap_set), \
-                                              &MemberWrapper<decltype(&f), &f>::wrap_set>::wrap))
+#define WRAPMEM_1(f) (&(LuaWrapper<decltype(&MemberWrapper<decltype(&f), &f>::wrap), \
+                                            &MemberWrapper<decltype(&f), &f>::wrap>::wrap))
+#define WRAPMEM_GET_1(f) (&(LuaWrapper<decltype(&MemberWrapperV<decltype(&f), &f>::wrap_get), \
+                                                &MemberWrapperV<decltype(&f), &f>::wrap_get>::wrap))
+#define WRAPMEM_SET_1(f) (&(LuaWrapper<decltype(&MemberWrapperV<decltype(&f), &f>::wrap_set), \
+                                                &MemberWrapperV<decltype(&f), &f>::wrap_set>::wrap))
+#define WRAPMEM_2(T, f) (&(LuaWrapper<decltype(&MemberWrapper<decltype(&T::f), &T::f>::wrapT<T>), \
+                                               &MemberWrapper<decltype(&T::f), &T::f>::wrapT<T>>::wrap))
+#define WRAPMEM_GET_2(T, f) (&(LuaWrapper<decltype(&MemberWrapperV<decltype(&T::f), &T::f>::wrapT_get<T>), \
+                                                   &MemberWrapperV<decltype(&T::f), &T::f>::wrapT_get<T>>::wrap))
+#define WRAPMEM_SET_2(T, f) (&(LuaWrapper<decltype(&MemberWrapperV<decltype(&T::f), &T::f>::wrapT_set<T>), \
+                                                   &MemberWrapperV<decltype(&T::f), &T::f>::wrapT_set<T>>::wrap))
+#define WRAPMEM(...) WRAP_FIX_MSVC(WRAP_PP_CHOOSE(WRAPMEM, __VA_ARGS__)(__VA_ARGS__))
+#define WRAPMEM_GET(...) WRAP_FIX_MSVC(WRAP_PP_CHOOSE(WRAPMEM_GET, __VA_ARGS__)(__VA_ARGS__))
+#define WRAPMEM_SET(...) WRAP_FIX_MSVC(WRAP_PP_CHOOSE(WRAPMEM_SET, __VA_ARGS__)(__VA_ARGS__))
 
 #endif /* LIB_LUA_TEMPLATES_H_ */

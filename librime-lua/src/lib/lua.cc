@@ -2,6 +2,23 @@
 #include "lua_templates.h"
 
 namespace LuaImpl {
+  int wrap_common(lua_State *L, int (*cfunc)(lua_State *)) {
+    char room[sizeof(C_State)];
+    C_State *C = new (&room) C_State();
+    lua_pushcfunction(L, cfunc);
+    lua_insert(L, 1);
+    lua_pushlightuserdata(L, (void *) C);
+    lua_insert(L, 2);
+    int status = lua_pcall(L, lua_gettop(L) - 1, LUA_MULTRET, 0);
+    if (status != LUA_OK) {
+      C->~C_State();
+      lua_error(L);
+      abort(); // unreachable
+    }
+    C->~C_State();
+    return lua_gettop(L);
+  }
+
   static int index(lua_State *L) {
     if (luaL_getmetafield(L, 1, "methods") != LUA_TNIL) {
       lua_pushvalue(L, 2);
@@ -247,6 +264,10 @@ std::shared_ptr<LuaObj> Lua::getglobal(const std::string &v) {
   return o;
 }
 
+void Lua::gc() {
+  lua_gc(L_, LUA_GCCOLLECT, 0);
+}
+
 LuaObj::LuaObj(lua_State *L, int i) : L_(L) {
   lua_pushvalue(L, i);
   id_ = luaL_ref(L, LUA_REGISTRYINDEX);
@@ -264,17 +285,17 @@ std::shared_ptr<LuaObj> LuaObj::todata(lua_State *L, int i) {
   return std::shared_ptr<LuaObj>(new LuaObj(L, i));
 }
 
-void export_type(lua_State *L,
-                 const char *name, lua_CFunction gc,
-                 const luaL_Reg *funcs, const luaL_Reg *methods,
-                 const luaL_Reg *vars_get, const luaL_Reg *vars_set) {
+void lua_export_type(lua_State *L,
+                     const LuaTypeInfo *type, lua_CFunction gc,
+                     const luaL_Reg *funcs, const luaL_Reg *methods,
+                     const luaL_Reg *vars_get, const luaL_Reg *vars_set) {
   for (int i = 0; funcs[i].name; i++) {
     lua_register(L, funcs[i].name, funcs[i].func);
   }
 
-  luaL_newmetatable(L, name);
-  lua_pushstring(L, name);
-  lua_setfield(L, -2, "name");
+  luaL_newmetatable(L, type->name());
+  lua_pushlightuserdata(L, (void *) type);
+  lua_setfield(L, -2, "type");
   if (gc) {
     lua_pushcfunction(L, gc);
     lua_setfield(L, -2, "__gc");

@@ -7,11 +7,17 @@ export DEB_CFLAGS_MAINT_APPEND  =
 include /usr/share/dpkg/default.mk
 
 # For individual package versions
-REV_CHARCODE = 20220204
-REV_LUA = 20220206
-REV_OCTAGRAM = 20210816
+REV_CHARCODE = 20230904
+REV_LUA = 20230917
+REV_OCTAGRAM = 20230125
 
 _DEB_VERSION_REVISION = $(shell echo $(DEB_VERSION) | sed -e 's/^.*-//g')
+
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	LIBRIME_BUILD_TEST_FLAG := ON
+else
+	LIBRIME_BUILD_TEST_FLAG := OFF
+endif
 
 %:
 	dh $@ --buildsystem=cmake
@@ -24,10 +30,11 @@ override_dh_auto_configure:
 	    -DCMAKE_BUILD_TYPE=Release \
 	    -DINSTALL_PRIVATE_HEADERS=ON \
 	    -DENABLE_EXTERNAL_PLUGINS=ON \
-	    -DBOOST_USE_CXX11=ON \
-	    -DBUILD_TEST=OFF \
+	    -DBUILD_TEST=$(LIBRIME_BUILD_TEST_FLAG) \
 	    -DBUILD_MERGED_PLUGINS=Off \
-	    -DENABLE_EXTERNAL_PLUGINS=On
+	    -DENABLE_EXTERNAL_PLUGINS=On \
+	    -DENABLE_TIMESTAMP=ON \
+	    $(NULL)
 
 override_dh_installchangelogs:
 	dh_installchangelogs -k CHANGELOG.md

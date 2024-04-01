@@ -1,3 +1,4 @@
+#include <rime_api.h>
 #include <rime/candidate.h>
 #include <rime/translation.h>
 #include <rime/segmentation.h>
@@ -11,36 +12,68 @@
 #include <rime/gear/translator_commons.h>
 #include <rime/dict/reverse_lookup_dictionary.h>
 #include <rime/key_event.h>
+#include <rime/language.h>
 #include <rime/gear/memory.h>
 #include <rime/dict/dictionary.h>
 #include <rime/dict/user_dictionary.h>
+#include <rime/service.h>
 #include <rime/switcher.h>
 #include "lua_gears.h"
-#include "lib/lua_templates.h"
-#include <opencc/opencc.h>
+#include <boost/regex.hpp>
+
+#include "lib/lua_export_type.h"
+#include "optional.h"
+
+#define ENABLE_TYPES_EXT
 
 using namespace rime;
 
-template<typename T>
-struct LuaType<optional<T>> {
-  static void pushdata(lua_State *L, optional<T> o) {
-    if (o)
-      LuaType<T>::pushdata(L, *o);
-    else
-      lua_pushnil(L);
+namespace {
+
+template<typename> using void_t = void;
+
+template<typename T, typename = void>
+struct COMPAT {
+  // fallback version if librime is old
+  static an<ReverseDb> new_ReverseDb(const std::string &file) {
+    return New<ReverseDb>(std::string(RimeGetUserDataDir()) + "/" + file);
   }
 
-  static optional<T> &todata(lua_State *L, int i, C_State *C) {
-    if (lua_type(L, i) == LUA_TNIL)
-      return C->alloc<optional<T>>();
-    else
-      return C->alloc<optional<T>>(LuaType<T>::todata(L, i, C));
+  static string get_shared_data_dir() {
+    return string(rime_get_api()->get_shared_data_dir());
+  }
+
+  static string get_user_data_dir() {
+    return string(rime_get_api()->get_user_data_dir());
+  }
+
+  static string get_sync_dir() {
+    return string(rime_get_api()->get_sync_dir());
+  }
+};
+
+template<typename T>
+struct COMPAT<T, void_t<decltype(std::declval<T>().user_data_dir.string())>> {
+  static an<ReverseDb> new_ReverseDb(const std::string &file) {
+    return New<ReverseDb>(Service::instance().deployer().user_data_dir / file);
+  }
+
+  static string get_shared_data_dir() {
+    return Service::instance().deployer().shared_data_dir.string();
+  }
+
+  static string get_user_data_dir() {
+    return Service::instance().deployer().user_data_dir.string();
+  }
+
+  static string get_sync_dir() {
+    return Service::instance().deployer().sync_dir.string();
   }
 };
 
 //--- wrappers for Segment
 namespace SegmentReg {
-  typedef Segment T;
+  using T = Segment;
 
   T make(int start_pos, int end_pos) {
     return Segment(start_pos, end_pos);
@@ -85,6 +118,7 @@ namespace SegmentReg {
   static const luaL_Reg vars_get[] = {
     { "status", WRAP(get_status) },
     { "start", WRAPMEM_GET(T::start) },
+    { "_start", WRAPMEM_GET(T::start) },
     { "_end", WRAPMEM_GET(T::end) }, // end is keyword in Lua...
     { "length", WRAPMEM_GET(T::length) },
     { "tags", WRAPMEM_GET(T::tags) },
@@ -97,6 +131,7 @@ namespace SegmentReg {
   static const luaL_Reg vars_set[] = {
     { "status", WRAP(set_status) },
     { "start", WRAPMEM_SET(T::start) },
+    { "_start", WRAPMEM_SET(T::start) },
     { "_end", WRAPMEM_SET(T::end) }, // end is keyword in Lua...
     { "length", WRAPMEM_SET(T::length) },
     { "tags", WRAPMEM_SET(T::tags) },
@@ -109,7 +144,7 @@ namespace SegmentReg {
 
 //--- wrappers for an<Candidate>
 namespace CandidateReg {
-  typedef Candidate T;
+  using T = Candidate;
 
   string dynamic_type(T &c) {
     if (dynamic_cast<Phrase *>(&c))
@@ -149,8 +184,77 @@ namespace CandidateReg {
     return New<SimpleCandidate>(type, start, end, text, comment);
   }
 
+  an<T> shadow_candidate(const an<T> item,
+      const string& type, const string& text, const string& comment,
+      const bool inherit_comment)
+  {
+    return New<ShadowCandidate>(item, type, text, comment);
+  }
+
+  int raw_shadow_candidate(lua_State* L) {
+    size_t n = lua_gettop(L);
+    if (2 > n) {
+      return (1 == n) ?
+        luaL_error(L, "bad argument #2 to func (string expected, got no value)") :
+        luaL_error(L, "bad argument #1 to func (an<Candidate> expected, got no value)");
+    }
+    // init args(2-5) ( an<Candidate>, type [,text, comment,  inherit_comment])
+    if (5 < n)
+      lua_pop(L, n-5);
+    else if (4 == n)
+      lua_pushboolean(L, true);
+    else if (4 > n) {
+      for (int i=n; 4 > i ; i++)
+        lua_pushstring(L, "");
+      lua_pushboolean(L, true);
+    }
+    lua_pushcfunction(L, WRAP(shadow_candidate));
+    lua_insert(L, 1);
+    return  (LUA_OK==lua_pcall(L, lua_gettop(L)-1, 1, 0)) ? 1 : 0;
+  }
+
+  an<T> uniquified_candidate(const an<T> item,
+      const string& type, const string& text, const string& comment)
+  {
+    return New<UniquifiedCandidate>(item, type, text, comment);
+  }
+  int raw_uniquified_candidate(lua_State* L) {
+    size_t n = lua_gettop(L);
+    if (2 > n) {
+      return (1 == n) ?
+        luaL_error(L, "bad argument #2 to func (string expected, got no value)") :
+        luaL_error(L, "bad argument #1 to func (an<Candidate> expected, got no value)");
+    }
+    // init args(2-4) ( an<Candidate>, type [,text, comment])
+    if (4 < n)
+      lua_pop(L, n-4);
+    else if (4 > n) {
+      for (int i=n; 4 > i ; i++)
+        lua_pushstring(L, "");
+    }
+    lua_pushcfunction(L, WRAP(uniquified_candidate));
+    lua_insert(L, 1);
+    return  (LUA_OK==lua_pcall(L, lua_gettop(L)-1, 1, 0)) ? 1 : 0;
+  }
+
+  bool append(an<T> self, an<T> item) {
+    if (auto cand=  As<UniquifiedCandidate>(self) ) {
+      cand->Append(item);
+      return true;
+    }
+    LOG(WARNING) << "Can\'t append candidate.  args #1 expected an<UniquifiedCandidate> " ;
+    return false;
+  };
+
+  template<class OT>
+  an<OT> candidate_to_(an<T> t) {
+    return std::dynamic_pointer_cast<OT>(t);
+  };
+
   static const luaL_Reg funcs[] = {
     { "Candidate", WRAP(make) },
+    { "ShadowCandidate", (raw_shadow_candidate) },
+    { "UniquifiedCandidate", (raw_uniquified_candidate) },
     { NULL, NULL },
   };
 
@@ -158,25 +262,32 @@ namespace CandidateReg {
     { "get_dynamic_type", WRAP(dynamic_type) },
     { "get_genuine", WRAP(T::GetGenuineCandidate) },
     { "get_genuines", WRAP(T::GetGenuineCandidates) },
+    { "to_shadow_candidate", (raw_shadow_candidate) },
+    { "to_uniquified_candidate", (raw_uniquified_candidate) },
+    { "to_phrase", WRAP(candidate_to_<Phrase>)},
+    { "to_sentence", WRAP(candidate_to_<Sentence>)},
+    { "append", WRAP(append)},
     { NULL, NULL },
   };
 
   static const luaL_Reg vars_get[] = {
-    { "type", WRAPMEM(T::type) },
-    { "start", WRAPMEM(T::start) },
-    { "_end", WRAPMEM(T::end) }, // end is keyword in Lua...
-    { "quality", WRAPMEM(T::quality) },
-    { "text", WRAPMEM(T::text) },
-    { "comment", WRAPMEM(T::comment) },
-    { "preedit", WRAPMEM(T::preedit) },
+    { "type", WRAPMEM(T, type) },
+    { "start", WRAPMEM(T, start) },
+    { "_start", WRAPMEM(T, start) },
+    { "_end", WRAPMEM(T, end) }, // end is keyword in Lua...
+    { "quality", WRAPMEM(T, quality) },
+    { "text", WRAPMEM(T, text) },
+    { "comment", WRAPMEM(T, comment) },
+    { "preedit", WRAPMEM(T, preedit) },
     { NULL, NULL },
   };
 
   static const luaL_Reg vars_set[] = {
-    { "type", WRAPMEM(T::set_type) },
-    { "start", WRAPMEM(T::set_start) },
-    { "_end", WRAPMEM(T::set_end) },
-    { "quality", WRAPMEM(T::set_quality) },
+    { "type", WRAPMEM(T, set_type) },
+    { "start", WRAPMEM(T, set_start) },
+    { "_start", WRAPMEM(T, set_start) },
+    { "_end", WRAPMEM(T, set_end) },
+    { "quality", WRAPMEM(T, set_quality) },
     { "text", WRAP(set_text) },
     { "comment", WRAP(set_comment) },
     { "preedit", WRAP(set_preedit) },
@@ -186,7 +297,7 @@ namespace CandidateReg {
 
 //--- wrappers for an<Translation>
 namespace TranslationReg {
-  typedef Translation T;
+  using T = Translation;
 
   int raw_make(lua_State *L) {
     Lua *lua = Lua::from_state(L);
@@ -236,10 +347,10 @@ namespace TranslationReg {
 }
 
 namespace ReverseDbReg {
-  typedef ReverseDb T;
+  using T = ReverseDb;
 
   an<T> make(const string &file) {
-    an<T> db = New<ReverseDb>(string(RimeGetUserDataDir()) +  "/" + file);
+    an<T> db = COMPAT<Deployer>::new_ReverseDb(file);
     db->Load();
     return db;
   }
@@ -272,10 +383,12 @@ namespace ReverseDbReg {
 }
 
 namespace SegmentationReg {
-  typedef Segmentation T;
+  using T = Segmentation;
 
-  Segment &back(T &t) {
-    return t.back();
+  Segment *back(T &t) {
+    if (t.empty())
+      return nullptr;
+    return &t.back();
   }
 
   void pop_back(T &t) {
@@ -292,6 +405,23 @@ namespace SegmentationReg {
 
   bool empty(T &t){
     return t.empty();
+  }
+
+  vector<Segment *> get_segments(T &t) {
+    vector<Segment *> ret(t.size());
+    std::transform(t.begin(), t.end(), ret.begin(),[](Segment &s) { return &s;});
+    return ret;
+  }
+
+  Segment *get_at(T &t, const int idx) {
+    size_t size = t.size();
+    int index = (idx < 0) ? size + idx : idx;
+    if (index >=0 && index < size)
+      return &t.at(index);
+
+    LOG(WARNING) << "the index(" << idx <<")"
+      << " is out of range(-size .. size-1); size: "<< size ;
+    return nullptr;
   }
 
   static const luaL_Reg funcs[] = {
@@ -311,11 +441,14 @@ namespace SegmentationReg {
     { "get_current_end_position", WRAPMEM(T::GetCurrentEndPosition) },
     { "get_current_segment_length", WRAPMEM(T::GetCurrentSegmentLength) },
     { "get_confirmed_position", WRAPMEM(T::GetConfirmedPosition) },
+    { "get_segments", WRAP(get_segments) },
+    { "get_at", WRAP(get_at) },
     { NULL, NULL },
   };
 
   static const luaL_Reg vars_get[] = {
     { "input", WRAPMEM(T::input) },
+    { "size", WRAPMEM(T, size) },
     { NULL, NULL },
   };
 
@@ -326,8 +459,8 @@ namespace SegmentationReg {
 }
 
 namespace MenuReg {
-  typedef Menu T;
-    
+  using T = Menu;
+
   an<T> make() {
     return New<T>();
   }
@@ -358,7 +491,7 @@ namespace MenuReg {
 }
 
 namespace KeyEventReg {
-  typedef KeyEvent T;
+  using T = KeyEvent;
 
   int keycode(const T &t) {
     return t.keycode();
@@ -402,7 +535,7 @@ namespace KeyEventReg {
 }
 
 namespace EngineReg {
-  typedef Engine T;
+  using T = Engine;
 
   static void apply_schema(T *engine, the<Schema> &schema) {
     engine->ApplySchema(schema.release());
@@ -433,8 +566,137 @@ namespace EngineReg {
   };
 }
 
+namespace CommitRecordReg {
+  using T = CommitRecord;
+
+  static const luaL_Reg funcs[] = {
+    { NULL, NULL },
+  };
+
+  static const luaL_Reg methods[] = {
+    { NULL, NULL },
+  };
+
+  static const luaL_Reg vars_get[] = {
+    { "type", WRAPMEM_GET(T::type) },
+    { "text", WRAPMEM_GET(T::text) },
+    { NULL, NULL },
+  };
+
+  static const luaL_Reg vars_set[] = {
+    { "type", WRAPMEM_SET(T::type) },
+    { "text", WRAPMEM_SET(T::text) },
+    { NULL, NULL },
+  };
+
+}
+
+namespace CommitHistoryReg {
+  using T = CommitHistory;
+  using CR = CommitRecord;
+  using R_ITER = T::reverse_iterator;
+
+  int raw_push(lua_State *L){
+    C_State C;
+    int n = lua_gettop(L);
+    if (2 > n){
+      lua_pop(L, n);
+      return 0;
+    }
+
+    T &t = LuaType<T &>::todata(L,1);
+    if (2 < n) {
+      if (lua_isstring(L, 2))
+        // string, string
+        t.Push(
+            CommitRecord(
+              LuaType<string>::todata(L, 2, &C),
+              LuaType<string>::todata(L, 3, &C) ) );
+      else
+        // composition, string
+        t.Push(
+            LuaType<Composition &>::todata(L, 2),
+            LuaType<string>::todata(L, 3, &C) );
+    }else {
+      // keyevent
+      if (const auto o= LuaType<an<KeyEvent>>::todata(L, 2))
+        t.Push(*o);
+    }
+    lua_pop(L, n);
+    return 0;
+  }
+
+  CR *back(T &t) {
+    if (t.empty())
+      return nullptr;
+    return &t.back();
+  }
+
+  vector<CR> to_table(T &t) {
+    return vector<CR>(std::begin(t), std::end(t) );
+  }
+
+  // for it, cr in context.commit_history:iter() do
+  //   print(it, w.type,w.txxt )
+  // end
+  int raw_next(lua_State *L) {
+    int n = lua_gettop(L);
+    if (2 != n)
+      return 0;
+
+    T &t = LuaType<T &>::todata(L, 1);
+    R_ITER &it = LuaType<R_ITER &>::todata(L, 2);
+    if ( t.rend() != it){
+      LuaType<CR>::pushdata(L, *it++);
+      return 2;
+    }
+    return 0;
+  }
+
+  //  return raw_next, t,  t.rbegin()
+  int raw_iter(lua_State *L) {
+    int n = lua_gettop(L);
+    if ( 1 > n )
+      return 0;
+
+    T &t = LuaType<T &>::todata(L, 1);
+    LuaType<lua_CFunction>::pushdata(L, raw_next);  // t ... raw_next
+    lua_pushvalue(L, 1); // t ... raw_next t
+    LuaType<R_ITER>::pushdata(L, *make_unique<R_ITER>(t.rbegin()) );
+    return 3;
+  }
+
+  static const luaL_Reg funcs[] = {
+    { NULL, NULL },
+  };
+
+  static const luaL_Reg methods[] = {
+    // push( KeyEvent| Composition, string| string, string)
+    {"push", raw_push},
+    {"back", WRAP(back)},
+    {"to_table", WRAP(to_table)},
+    {"iter", raw_iter},
+    {"repr",WRAPMEM(T,repr)},
+    {"latest_text",WRAPMEM(T, latest_text)},
+    //  std::list
+    {"empty", WRAPMEM(T, empty)},
+    {"clear", WRAPMEM(T, clear)},
+    {"pop_back", WRAPMEM(T, pop_back)},
+    { NULL, NULL },
+  };
+
+  static const luaL_Reg vars_get[] = {
+    {"size", WRAPMEM(T, size)},
+    { NULL, NULL },
+  };
+
+  static const luaL_Reg vars_set[] = {
+    { NULL, NULL },
+  };
+}
+
 namespace ContextReg {
-  typedef Context T;
+  using T = Context;
 
   Composition &get_composition(T &t) {
     return t.composition();
@@ -448,9 +710,9 @@ namespace ContextReg {
     return t.PushInput(str);
   }
 
-  //CommitHistory &get_commit_history(T &t) {
-  //  return t.commit_history();
-  //}
+  CommitHistory &get_commit_history(T &t) {
+    return t.commit_history();
+  }
 
   static const luaL_Reg funcs[] = {
     { NULL, NULL },
@@ -498,7 +760,7 @@ namespace ContextReg {
     { "option_update_notifier", WRAPMEM(T::option_update_notifier) },
     { "property_update_notifier", WRAPMEM(T::property_update_notifier) },
     { "unhandled_key_notifier", WRAPMEM(T::unhandled_key_notifier) },
-    //{ "commit_history", WRAP(get_commit_history) },
+    { "commit_history", WRAP(get_commit_history) },
     { NULL, NULL },
   };
 
@@ -511,7 +773,7 @@ namespace ContextReg {
 }
 
 namespace PreeditReg {
-  typedef Preedit T;
+  using T = Preedit;
 
   static const luaL_Reg funcs[] = {
     { NULL, NULL },
@@ -539,14 +801,16 @@ namespace PreeditReg {
 }
 
 namespace CompositionReg {
-  typedef Composition T;
+  using T = Composition;
 
   Segmentation *toSegmentation(T &t) {
     return dynamic_cast<Segmentation *>(&t);
   }
-  
-  Segment &back(T &t) {
-    return t.back();
+
+  Segment *back(T &t) {
+    if (t.empty())
+      return nullptr;
+    return &t.back();
   }
 
   void push_back(T &t, Segment &seg) {
@@ -587,7 +851,7 @@ namespace CompositionReg {
 }
 
 namespace SchemaReg {
-  typedef Schema T;
+  using T = Schema;
 
   the<T> make(const string &schema_id) {
     return std::unique_ptr<T>(new T(schema_id));
@@ -619,8 +883,8 @@ namespace SchemaReg {
 }
 
 namespace ConfigValueReg {
-  typedef ConfigValue T;
-  typedef ConfigItem E;
+  using T = ConfigValue;
+  using E = ConfigItem;
 
   // an<T> make(){
   //  return New<T>();
@@ -709,8 +973,8 @@ namespace ConfigValueReg {
   };
 }
 namespace ConfigListReg {
-  typedef ConfigList T;
-  typedef ConfigItem E;
+  using T = ConfigList;
+  using E = ConfigItem;
 
   an<T> make(){
     return New<T>();
@@ -761,8 +1025,8 @@ namespace ConfigListReg {
 
 
 namespace ConfigMapReg {
-  typedef ConfigMap T;
-  typedef ConfigItem E;
+  using T = ConfigMap;
+  using E = ConfigItem;
 
   an<T> make(){
     return New<T>();
@@ -789,20 +1053,12 @@ namespace ConfigMapReg {
     return t ;
   }
 
-  int raw_keys(lua_State *L) {
-    int n = lua_gettop(L);
-    if ( n < 1 ) return 0;
-    an<T> t= LuaType<an<T>>::todata(L, 1);
-    lua_pop(L, n);
-    lua_newtable(L);
-    int index=1;
-    for ( auto  it : *t) {
-      lua_pushstring(L, it.first.c_str());
-      lua_seti(L,1 , index++);
-    }
-    return 1;
+  std::vector<string> get_keys(T &t){
+    std::vector<string> keys;
+    for (auto it : t)
+      keys.push_back(it.first);
+    return keys;
   }
-
 
   static const luaL_Reg funcs[] = {
     {"ConfigMap", WRAP(make)},
@@ -816,7 +1072,7 @@ namespace ConfigMapReg {
     {"has_key", WRAPMEM(T::HasKey)},
     {"clear", WRAPMEM(T::Clear)},
     {"empty", WRAPMEM(T::empty)},
-    {"keys", raw_keys},
+    {"keys", WRAP(get_keys)},
     { NULL, NULL },
   };
 
@@ -824,6 +1080,7 @@ namespace ConfigMapReg {
     {"size", WRAP(size)},
     {"type",WRAP(type)},
     {"element",WRAP(element)},
+    { NULL, NULL },
   };
 
   static const luaL_Reg vars_set[] = {
@@ -832,10 +1089,10 @@ namespace ConfigMapReg {
 }
 
 namespace ConfigItemReg {
-  typedef ConfigItem T;
-  typedef ConfigMap M;
-  typedef ConfigList L;
-  typedef ConfigValue V;
+  using T = ConfigItem;
+  using M = ConfigMap;
+  using L = ConfigList;
+  using V = ConfigValue;
 
   string type(T &t){
     switch (t.type()) {
@@ -886,17 +1143,20 @@ namespace ConfigItemReg {
 }
 
 namespace ProjectionReg{
-  typedef Projection T;
+  using T = Projection;
   an<T> make(){
     return New<T>();
   }
 
-  string apply(T &t, const string &s){
-    string res= s;
-    if (t.Apply(&res))
-      return res;
-    else
-      return "";
+  int raw_apply(lua_State* L) {
+    an<T> t = LuaType<an<T>>::todata(L, 1);
+    string res(lua_tostring(L, 2));
+    bool ret_org_str = lua_gettop(L)>2 && lua_toboolean(L, 3);
+    if (!t->Apply(&res) && !ret_org_str)
+      res.clear();
+
+    LuaType<string>::pushdata(L, res);
+    return 1;
   }
 
   static const luaL_Reg funcs[] = {
@@ -906,7 +1166,7 @@ namespace ProjectionReg{
 
   static const luaL_Reg methods[] = {
     {"load",WRAPMEM(T::Load)},
-    {"apply",WRAP(apply)},
+    {"apply", raw_apply},
     { NULL, NULL },
   };
 
@@ -920,7 +1180,7 @@ namespace ProjectionReg{
 }
 
 namespace ConfigReg {
-  typedef Config T;
+  using T = Config;
 
   optional<bool> get_bool(T &t, const string &path) {
     bool v;
@@ -1041,22 +1301,21 @@ static int raw_connect(lua_State *L) {
   Lua *lua = Lua::from_state(L);
   T & t = LuaType<T &>::todata(L, 1);
   an<LuaObj> o = LuaObj::todata(L, 2);
+  auto f = [lua, o](I... i) {
+    auto r = lua->void_call<an<LuaObj>, Context *>(o, i...);
+    if (!r.ok()) {
+                 auto e = r.get_err();
+      LOG(ERROR) << "Context::Notifier error(" << e.status << "): " << e.e;
+    }
+  };
 
-  auto c = t.connect
-    ([lua, o](I... i) {
-       auto r = lua->void_call<an<LuaObj>, Context *>(o, i...);
-       if (!r.ok()) {
-         auto e = r.get_err();
-         LOG(ERROR) << "Context::Notifier error(" << e.status << "): " << e.e;
-       }
-     });
-
+  auto c = (lua_gettop(L) > 2) ? t.connect(lua_tointeger(L, 3), f) : t.connect(f);
   LuaType<boost::signals2::connection>::pushdata(L, c);
   return 1;
 }
 
 namespace ConnectionReg {
-  typedef boost::signals2::connection T;
+  using T = boost::signals2::connection;
 
   static const luaL_Reg funcs[] = {
     { NULL, NULL },
@@ -1098,7 +1357,7 @@ namespace NotifierReg {
 }
 
 namespace OptionUpdateNotifierReg {
-  typedef Context::OptionUpdateNotifier T;
+  using T = Context::OptionUpdateNotifier;
 
   static const luaL_Reg funcs[] = {
     { NULL, NULL },
@@ -1119,7 +1378,7 @@ namespace OptionUpdateNotifierReg {
 }
 
 namespace PropertyUpdateNotifierReg {
-  typedef Context::PropertyUpdateNotifier T;
+  using T = Context::PropertyUpdateNotifier;
 
   static const luaL_Reg funcs[] = {
     { NULL, NULL },
@@ -1140,7 +1399,7 @@ namespace PropertyUpdateNotifierReg {
 }
 
 namespace KeyEventNotifierReg {
-  typedef Context::KeyEventNotifier T;
+  using T = Context::KeyEventNotifier;
 
   static const luaL_Reg funcs[] = {
     { NULL, NULL },
@@ -1187,10 +1446,33 @@ namespace LogReg {
   }
 }
 namespace CommitEntryReg {
-  typedef CommitEntry T;
+  using T = CommitEntry;
+  using D = DictEntry;
 
-  vector<const rime::DictEntry*> get(T& ce) {
+  vector<const rime::DictEntry*> get(const T& ce) {
     return ce.elements;
+  }
+  bool update_entry(const T &t, const D& entry, int commit, const string& prefix_str) {
+    if (!t.memory)
+      return false;
+    auto user_dict = t.memory->user_dict();
+    if (!user_dict || !user_dict->loaded())
+      return false;
+
+    return user_dict->UpdateEntry(entry, commit, prefix_str);
+  }
+
+  bool update(const T& t, int commit) {
+    if (!t.memory)
+      return false;
+    auto user_dict = t.memory->user_dict();
+    if (!user_dict || !user_dict->loaded())
+      return false;
+
+    for (const DictEntry* e : t.elements) {
+      user_dict->UpdateEntry(*e, commit);
+    }
+    return true;
   }
 
   static const luaL_Reg funcs[] = {
@@ -1199,6 +1481,8 @@ namespace CommitEntryReg {
 
   static const luaL_Reg methods[] = {
     {"get",WRAP(get)},
+    {"update_entry",WRAP(update_entry)},
+    {"update",WRAP(update)},
     { NULL, NULL },
   };
 
@@ -1211,13 +1495,18 @@ namespace CommitEntryReg {
   };
 }
 namespace DictEntryReg {
-  typedef DictEntry T;
-  an<T> make() {
-    return an<T>(new T());
+  using T = DictEntry;
+
+  int raw_make(lua_State* L) {
+    an<T> t = (lua_gettop(L)>0)
+      ? New<T>(LuaType<const T&>::todata(L,1)) : New<T>();
+
+    LuaType<an<T>>::pushdata(L, t);
+    return 1;
   }
 
   static const luaL_Reg funcs[] = {
-    {"DictEntry",WRAP(make)},
+    {"DictEntry",raw_make},
     { NULL, NULL },
   };
 
@@ -1250,8 +1539,7 @@ namespace DictEntryReg {
   };
 }
 namespace CodeReg {
-
-  typedef Code T;
+  using T = Code;
 
   an<T> make() {
     return an<T>(new Code());
@@ -1309,7 +1597,7 @@ namespace MemoryReg {
       uter = UserDictEntryIterator();
     }
   };
-  typedef LuaMemory T;
+  using T = LuaMemory;
 
   bool MemoryReg::LuaMemory::Memorize(const CommitEntry& commit_entry) {
     if (!memorize_callback)
@@ -1433,9 +1721,9 @@ namespace MemoryReg {
 
 //--- wrappers for Phrase
 namespace PhraseReg {
-  typedef Phrase T;
+  using T = Phrase;
 
-  an<T> make(MemoryReg::LuaMemory& memory, 
+  an<T> make(MemoryReg::LuaMemory& memory,
     const string& type,
     size_t start,
     size_t end,
@@ -1446,6 +1734,10 @@ namespace PhraseReg {
 
   an<Candidate> toCandidate(an<T> phrase) {
     return phrase;
+  }
+
+  string lang_name(T &t){
+    return t.language()->name();
   }
 
   static const luaL_Reg funcs[] = {
@@ -1459,40 +1751,112 @@ namespace PhraseReg {
   };
 
   static const luaL_Reg vars_get[] = {
-    { "language", WRAPMEM(T::language)},
-    { "type", WRAPMEM(T::type) },
-    { "start", WRAPMEM(T::start) },
-    { "_end", WRAPMEM(T::end) }, // end is keyword in Lua...
-    { "quality", WRAPMEM(T::quality) },
-    { "text", WRAPMEM(T::text) },
-    { "comment", WRAPMEM(T::comment) },
-    { "preedit", WRAPMEM(T::preedit) },
-    { "weight", WRAPMEM(T::weight)},
-    { "code", WRAPMEM(T::code)},
-    { "entry", WRAPMEM(T::entry)},
+    { "language", WRAPMEM(T, language)},
+    { "lang_name", WRAP(lang_name)},
+    { "type", WRAPMEM(T, type) },
+    { "start", WRAPMEM(T, start) },
+    { "_start", WRAPMEM(T, start) },
+    { "_end", WRAPMEM(T, end) }, // end is keyword in Lua...
+    { "quality", WRAPMEM(T, quality) },
+    { "text", WRAPMEM(T, text) },
+    { "comment", WRAPMEM(T, comment) },
+    { "preedit", WRAPMEM(T, preedit) },
+    { "weight", WRAPMEM(T, weight)},
+    { "code", WRAPMEM(T, code)},
+    { "entry", WRAPMEM(T, entry)},
     //span
     //language doesn't wrap yet, so Wrap it later
     { NULL, NULL },
   };
 
   static const luaL_Reg vars_set[] = {
-    { "type", WRAPMEM(T::set_type) },
-    { "start", WRAPMEM(T::set_start) },
-    { "_end", WRAPMEM(T::set_end) },
-    { "quality", WRAPMEM(T::set_quality) },
-    { "comment", WRAPMEM(T::set_comment) },
-    { "preedit", WRAPMEM(T::set_preedit) },
-    { "weight", WRAPMEM(T::set_weight)},
+    { "type", WRAPMEM(T, set_type) },
+    { "start", WRAPMEM(T, set_start) },
+    { "_start", WRAPMEM(T, set_start) },
+    { "_end", WRAPMEM(T, set_end) },
+    { "quality", WRAPMEM(T, set_quality) },
+    { "comment", WRAPMEM(T, set_comment) },
+    { "preedit", WRAPMEM(T, set_preedit) },
+    { "weight", WRAPMEM(T, set_weight)},
     // set_syllabifier
     { NULL, NULL },
   };
 }// Phrase work with Translator
+//--- wrappers for Phrase
+namespace SentenceReg {
+  using T = Sentence;
+
+  an<Candidate> toCandidate(an<T> t) {
+    return t;
+  }
+
+  string lang_name(T& t){
+    return t.language()->name();
+  }
+
+  vector<DictEntry> components(T& t) {
+    return t.components();
+  }
+
+  vector<size_t> word_lengths(T& t) {
+    return t.word_lengths();
+  }
+
+  static const luaL_Reg funcs[] = {
+    { NULL, NULL },
+  };
+
+  static const luaL_Reg methods[] = {
+    { "toCandidate", WRAP(toCandidate)},
+    { NULL, NULL },
+  };
+
+  static const luaL_Reg vars_get[] = {
+    { "language", WRAPMEM(T, language)},
+    { "lang_name", WRAP(lang_name)},
+    { "type", WRAPMEM(T, type) },
+    { "start", WRAPMEM(T, start) },
+    { "_start", WRAPMEM(T, start) },
+    { "_end", WRAPMEM(T, end) }, // end is keyword in Lua...
+    { "quality", WRAPMEM(T, quality) },
+    { "text", WRAPMEM(T, text) },
+    { "comment", WRAPMEM(T, comment) },
+    { "preedit", WRAPMEM(T, preedit) },
+    { "weight", WRAPMEM(T, weight)},
+    { "code", WRAPMEM(T, code)},
+    { "entry", WRAPMEM(T, entry)},
+    //span
+    //language doesn't wrap yet, so Wrap it later
+    // Sentence membors
+    { "word_lengths", WRAP(word_lengths)},
+    { "entrys", WRAP(components)},
+    { "entrys_size", WRAPMEM(T, size)},
+    { "entrys_empty", WRAPMEM(T, empty)},
+    { NULL, NULL },
+  };
+
+  static const luaL_Reg vars_set[] = {
+    { "type", WRAPMEM(T, set_type) },
+    { "start", WRAPMEM(T, set_start) },
+    { "_start", WRAPMEM(T, set_start) },
+    { "_end", WRAPMEM(T, set_end) },
+    { "quality", WRAPMEM(T, set_quality) },
+    { "comment", WRAPMEM(T, set_comment) },
+    { "preedit", WRAPMEM(T, set_preedit) },
+    { "weight", WRAPMEM(T, set_weight)},
+    // set_syllabifier
+    { NULL, NULL },
+  };
+}// Sentence work with Translator
 
 namespace KeySequenceReg {
-  typedef KeySequence T;
+  using T = KeySequence;
 
-  an<T> make() {
-    return New<T>();
+  int raw_make(lua_State *L){
+    an<T> t = (0<lua_gettop(L)) ? New<T>((  lua_tostring(L,1) )) : New<T>();
+    lua_pop(L,lua_gettop(L));
+    LuaType<an<T>>::pushdata(L, t);
+    return 1;
   }
 
   vector<KeyEvent> toKeyEvent(T& t) {
@@ -1500,7 +1864,7 @@ namespace KeySequenceReg {
   }
 
   static const luaL_Reg funcs[] = {
-    { "KeySequence", WRAP(make) },
+    { "KeySequence", raw_make },
     { NULL, NULL },
   };
 
@@ -1522,30 +1886,64 @@ namespace KeySequenceReg {
 
 namespace RimeApiReg {
   string get_rime_version() {
-    RimeApi* rime = rime_get_api();
-    return string(rime->get_version());
+    return string(rime_get_api()->get_version());
   }
 
-  string get_shared_data_dir() {
-    RimeApi* rime = rime_get_api();
-    return string(rime->get_shared_data_dir());
+  string get_distribution_name(){
+    return Service::instance().deployer().distribution_name;
   }
 
-  string get_user_data_dir() {
-    RimeApi* rime = rime_get_api();
-    return string(rime->get_user_data_dir());
+  string get_distribution_code_name(){
+    return Service::instance().deployer().distribution_code_name;
   }
 
-  string get_sync_dir() {
-    RimeApi* rime = rime_get_api();
-    return string(rime->get_sync_dir());
+  string get_distribution_version(){
+    return Service::instance().deployer().distribution_version;
+  }
+
+  string get_user_id(){
+    return Service::instance().deployer().user_id;
+  }
+
+// boost::regex api
+  optional<std::vector<string>> regex_search(
+      const string &target ,const string &pattern )
+  {
+    boost::regex reg(pattern);
+    boost::smatch sm;
+    std::vector<string> res;
+    if ( boost::regex_search(target,sm,reg)) {
+      for (auto str : sm)
+        res.push_back(str);
+      return res;
+    }
+    return {}; // return nil
+  }
+
+  bool regex_match(const string &target, const string &pattern)
+  {
+    boost::regex reg(pattern);
+    return boost::regex_match(target, reg);
+  }
+
+  string regex_replace(const string &target, const string &pattern, const string &fmt)
+  {
+    boost::regex reg(pattern);
+    return boost::regex_replace(target, reg, fmt);
   }
 
   static const luaL_Reg funcs[]= {
     { "get_rime_version", WRAP(get_rime_version) },
-    { "get_shared_data_dir", WRAP(get_shared_data_dir) },
-    { "get_user_data_dir",  WRAP(get_user_data_dir) },
-    { "get_sync_dir",  WRAP(get_sync_dir) },
+    { "get_shared_data_dir", WRAP(COMPAT<Deployer>::get_shared_data_dir) },
+    { "get_user_data_dir", WRAP(COMPAT<Deployer>::get_user_data_dir) },
+    { "get_sync_dir", WRAP(COMPAT<Deployer>::get_sync_dir) },
+    { "get_distribution_name", WRAP(get_distribution_name) },
+    { "get_distribution_code_name", WRAP(get_distribution_code_name) },
+    { "get_distribution_version", WRAP(get_distribution_version) },
+    { "get_user_id", WRAP(get_user_id) },
+    { "regex_match", WRAP(regex_match) },
+    { "regex_search", WRAP(regex_search) },
+    { "regex_replace", WRAP(regex_replace) },
     { NULL, NULL },
   };
 
@@ -1557,7 +1955,7 @@ namespace RimeApiReg {
 }
 
 namespace SwitcherReg {
-  typedef Switcher T;
+  using T = Switcher;
 
   an<T> make(Engine *engine) {
     return New<T>(engine);
@@ -1589,61 +1987,11 @@ namespace SwitcherReg {
     { NULL, NULL },
   };
 }
-namespace OpenccReg{
-  typedef opencc::SimpleConverter T;
 
-  an<T> make(const string &filename){
-    return New<T>(filename);
-  }
-
-  string convert(T &t, const string& text){
-    return t.Convert(text);
-  }
-
-  static const luaL_Reg funcs[] = {
-    { "Opencc", WRAP(make) },
-    { NULL, NULL },
-  };
-
-  static const luaL_Reg methods[] = {
-    { "convert", WRAP(convert) },
-    { NULL, NULL },
-  };
-
-  static const luaL_Reg vars_get[] = {
-    { NULL, NULL },
-  };
-
-  static const luaL_Reg vars_set[] = {
-    { NULL, NULL },
-  };
 }
 
-//--- Lua
-#define EXPORT(ns, L) \
-  do { \
-  export_type(L, LuaType<ns::T>::name(), LuaType<ns::T>::gc,       \
-              ns::funcs, ns::methods, ns::vars_get, ns::vars_set); \
-  export_type(L, LuaType<ns::T &>::name(), NULL,                   \
-              ns::funcs, ns::methods, ns::vars_get, ns::vars_set); \
-  export_type(L, LuaType<const ns::T>::name(), LuaType<ns::T>::gc, \
-              ns::funcs, ns::methods, ns::vars_get, ns::vars_set); \
-  export_type(L, LuaType<const ns::T &>::name(), NULL,             \
-              ns::funcs, ns::methods, ns::vars_get, ns::vars_set); \
-  export_type(L, LuaType<an<ns::T>>::name(), LuaType<an<ns::T>>::gc, \
-              ns::funcs, ns::methods, ns::vars_get, ns::vars_set); \
-  export_type(L, LuaType<an<const ns::T>>::name(), LuaType<an<const ns::T>>::gc, \
-              ns::funcs, ns::methods, ns::vars_get, ns::vars_set); \
-  export_type(L, LuaType<ns::T *>::name(), NULL,                   \
-              ns::funcs, ns::methods, ns::vars_get, ns::vars_set); \
-  export_type(L, LuaType<const ns::T *>::name(), NULL,             \
-              ns::funcs, ns::methods, ns::vars_get, ns::vars_set); \
-  } while (0)
-
-void export_type(lua_State *L,
-                 const char *name, lua_CFunction gc,
-                 const luaL_Reg *funcs, const luaL_Reg *methods,
-                 const luaL_Reg *vars_get, const luaL_Reg *vars_set);
+void types_ext_init(lua_State *L);
+void opencc_init(lua_State *L);
 
 void types_init(lua_State *L) {
   EXPORT(SegmentReg, L);
@@ -1654,6 +2002,8 @@ void types_init(lua_State *L) {
   EXPORT(MenuReg, L);
   EXPORT(KeyEventReg, L);
   EXPORT(EngineReg, L);
+  EXPORT(CommitRecordReg, L);
+  EXPORT(CommitHistoryReg, L);
   EXPORT(ContextReg, L);
   EXPORT(PreeditReg, L);
   EXPORT(CompositionReg, L);
@@ -1674,12 +2024,16 @@ void types_init(lua_State *L) {
   EXPORT(CodeReg, L);
   EXPORT(CommitEntryReg, L);
   EXPORT(PhraseReg, L);
+  EXPORT(SentenceReg, L);
   EXPORT(KeySequenceReg, L);
   EXPORT(SwitcherReg, L);
-  EXPORT(OpenccReg, L);
   LogReg::init(L);
   RimeApiReg::init(L);
+#ifdef ENABLE_TYPES_EXT
+  types_ext_init(L);
+#endif
 
-  export_type(L, LuaType<the<SchemaReg::T>>::name(), LuaType<the<SchemaReg::T>>::gc,
-              SchemaReg::funcs, SchemaReg::methods, SchemaReg::vars_get, SchemaReg::vars_set);
+  EXPORT_UPTR_TYPE(SchemaReg, L);
+
+  opencc_init(L);
 }

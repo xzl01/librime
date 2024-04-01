@@ -21,12 +21,10 @@ bool Composition::HasFinishedComposition() const {
   return at(k).status >= Segment::kSelected;
 }
 
-Preedit Composition::GetPreedit(const string& full_input, size_t caret_pos,
+Preedit Composition::GetPreedit(const string& full_input,
+                                size_t caret_pos,
                                 const string& caret) const {
   Preedit preedit;
-  if (empty()) {
-    return preedit;
-  }
   preedit.caret_pos = string::npos;
   size_t start = 0;
   size_t end = 0;
@@ -40,15 +38,13 @@ Preedit Composition::GetPreedit(const string& full_input, size_t caret_pos,
       if (cand) {
         end = cand->end();
         preedit.text += cand->text();
-      }
-      else {  // raw input
+      } else {  // raw input
         end = at(i).end;
         if (!at(i).HasTag("phony")) {
           preedit.text += input_.substr(start, end - start);
         }
       }
-    }
-    else {  // highlighted
+    } else {  // highlighted
       preedit.sel_start = preedit.text.length();
       preedit.sel_end = string::npos;
       if (cand && !cand->preedit().empty()) {
@@ -66,8 +62,7 @@ Preedit Composition::GetPreedit(const string& full_input, size_t caret_pos,
         } else {
           preedit.text += cand->preedit();
         }
-      }
-      else {
+      } else {
         end = at(i).end;
         preedit.text += input_.substr(start, end - start);
       }
@@ -110,8 +105,7 @@ string Composition::GetCommitText() const {
     if (auto cand = seg.GetSelectedCandidate()) {
       end = cand->end();
       result += cand->text();
-    }
-    else {
+    } else {
       end = seg.end;
       if (!seg.HasTag("phony")) {
         result += input_.substr(seg.start, seg.end - seg.start);
@@ -169,7 +163,8 @@ string Composition::GetDebugText() const {
 }
 
 string Composition::GetTextBefore(size_t pos) const {
-  if (empty()) return string();
+  if (empty())
+    return string();
   for (const auto& seg : boost::adaptors::reverse(*this)) {
     if (seg.end <= pos) {
       if (auto cand = seg.GetSelectedCandidate()) {
