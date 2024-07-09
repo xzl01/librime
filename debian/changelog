@@ -1,3 +1,9 @@
+librime (1.11.2+dfsg1-1deepin1) unstable; urgency=medium
+
+  * Revert t64
+
+ -- xiangzelong <xiangzelong@deepin.org>  Tue, 09 Jul 2024 10:46:16 +0800
+
 librime (1.11.2+dfsg1-1) unstable; urgency=medium
 
   * New upstream release.
