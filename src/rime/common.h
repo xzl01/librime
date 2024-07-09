@@ -26,7 +26,6 @@
 #include <boost/signals2/signal.hpp>
 
 #ifdef RIME_ENABLE_LOGGING
-#define GLOG_NO_ABBREVIATED_SEVERITIES
 #include <glog/logging.h>
 #else
 #include "no_logging.h"
@@ -100,19 +99,11 @@ class path : public std::filesystem::path {
   explicit path(const char* utf8_path) : fs_path(utf8_path) {}
 #endif
 
-  path& operator/=(const path& p) {
-    return *this = fs_path::operator/=(p);
-  }
-  path& operator/=(const fs_path& p) {
-    return *this = fs_path::operator/=(p);
-  }
+  path& operator/=(const path& p) { return *this = fs_path::operator/=(p); }
+  path& operator/=(const fs_path& p) { return *this = fs_path::operator/=(p); }
   // convert UTF-8 encoded string to native encoding, then append.
-  path& operator/=(const std::string& p) {
-    return *this /= path(p);
-  }
-  path& operator/=(const char* p) {
-    return *this /= path(p);
-  }
+  path& operator/=(const std::string& p) { return *this /= path(p); }
+  path& operator/=(const char* p) { return *this /= path(p); }
 
   friend path operator/(const path& lhs, const path& rhs) {
     return path(lhs) /= rhs;
@@ -136,6 +127,11 @@ class path : public std::filesystem::path {
   friend path operator/(const fs_path& lhs, const char* rhs) {
     return path(lhs) /= path(rhs);
   }
+#ifdef RIME_ENABLE_LOGGING
+  friend std::ostream& operator<<(std::ostream& os, const path& p) {
+    return os << p.u8string();
+  }
+#endif
 };
 
 }  // namespace rime

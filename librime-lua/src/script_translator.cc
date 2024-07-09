@@ -10,6 +10,9 @@
 #include <rime/dict/corrector.h>
 #include <rime/gear/poet.h>
 
+#include <rime/dict/dictionary.h>
+#include <rime/dict/user_dictionary.h>
+#include <rime/language.h>
 
 #include "translator.h"
 
@@ -29,7 +32,8 @@ namespace ScriptTranslatorReg {
           int commits, const string& new_entory_prefix);
 
       SET_(memorize_callback, an<LuaObj>);
-      bool memorize_callback();
+      optional<an<LuaObj>> memorize_callback();
+      string lang_name() const { return (language_) ? language_->name() : "";};
 
       // TranslatorOptions
       SET_(contextual_suggestions, bool);
@@ -45,6 +49,12 @@ namespace ScriptTranslatorReg {
       GET_(enable_correction, bool);
       void set_enable_correction(bool);
 
+      void disconnect() {
+        dict_.reset();
+        user_dict_.reset();
+        language_.reset();
+      }
+
     protected:
       Lua* lua_;
       an<LuaObj> memorize_callback_;
@@ -53,8 +63,10 @@ namespace ScriptTranslatorReg {
 
   using T = LScriptTranslator;
 
-  bool T::memorize_callback() {
-    return (memorize_callback_) ? true : false;
+  optional<an<LuaObj>> T::memorize_callback() {
+    if (memorize_callback_)
+      return memorize_callback_;
+    return {};
   }
 
   bool T::memorize(const CommitEntry& commit_entry) {
@@ -67,7 +79,7 @@ namespace ScriptTranslatorReg {
     }
 
     auto r = lua_->call<bool, an<LuaObj>, LScriptTranslator*, const CommitEntry&>(
-        memorize_callback_, this, commit_entry);
+                   memorize_callback_, this, commit_entry);
     if (!r.ok()) {
       auto e = r.get_err();
       LOG(ERROR) << "LScriptTranslator of " << name_space_
@@ -85,7 +97,7 @@ namespace ScriptTranslatorReg {
   }
 
   void T::set_enable_correction(bool enable) {
-    if (enable_correction_ = enable && !corrector_)
+    if ((enable_correction_ = enable && !corrector_))
       init_correction();
   }
 
@@ -101,6 +113,10 @@ namespace ScriptTranslatorReg {
     return cl ?  user_dict_disabling_patterns_.Load(cl) : false;
   }
 
+  an<Translator> as_translator(an<T> &t) {
+    return As<Translator>(t);
+  }
+
   static const luaL_Reg funcs[] = {
     {NULL, NULL},
   };
@@ -113,14 +129,16 @@ namespace ScriptTranslatorReg {
     WMEM(memorize),      // delegate TableTransaltor::Momorize
     WMEM(update_entry),  // delegate UserDictionary::UpdateEntry
     WMEM(reload_user_dict_disabling_patterns),
-    Set_WMEM(memorize_callback),  // an<LuaObj> callback function
+    {"set_memorize_callback", raw_set_memorize_callback<T>},  // an<LuaObj> callback function
+    {"disconnect", WRAPMEM(T::disconnect)},
     {NULL, NULL},
   };
 
   static const luaL_Reg vars_get[] = {
-    Get_WMEM(name_space),  // string
-    Set_WMEM(memorize_callback),  // an<LuaObj> callback function
-                                  // ScriptTranslator member
+    Get_WMEM(name_space),            // string
+    Get_WMEM(lang_name),             // string
+    Get_WMEM(memorize_callback),     // an<LuaObj> callback function
+    // ScriptTranslator member
     Get_WMEM(max_homophones),        // int
     Get_WMEM(spelling_hints),        // int
     Get_WMEM(always_show_comments),  // bool
@@ -137,16 +155,18 @@ namespace ScriptTranslatorReg {
     // Memory
     Get_WMEM(dict),
     Get_WMEM(user_dict),
+    {"translator", WRAP(as_translator)},
     {NULL, NULL},
   };
 
   static const luaL_Reg vars_set[] = {
+    {"memorize_callback", raw_set_memorize_callback<T>},  // an<LuaObj> callback function
     // ScriptTranslator member
     Set_WMEM(max_homophones),        // int
     Set_WMEM(spelling_hints),        // int
     Set_WMEM(always_show_comments),  // bool
     Set_WMEM(enable_correction),     // bool
-                                     // TranslatorOptions
+    // TranslatorOptions
     Set_WMEM(delimiters),              // string&
     Set_WMEM(tag),                     // string
     Set_WMEM(enable_completion),       // bool

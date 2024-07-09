@@ -7,9 +7,9 @@ export DEB_CFLAGS_MAINT_APPEND  =
 include /usr/share/dpkg/default.mk
 
 # For individual package versions
-REV_CHARCODE = 20230904
-REV_LUA = 20230917
-REV_OCTAGRAM = 20230125
+REV_CHARCODE = 20240209
+REV_LUA = 20240519
+REV_OCTAGRAM = 20240205
 
 _DEB_VERSION_REVISION = $(shell echo $(DEB_VERSION) | sed -e 's/^.*-//g')
 

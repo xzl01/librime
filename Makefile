@@ -1,5 +1,7 @@
 RIME_ROOT ?= $(CURDIR)
 
+RIME_SOURCE_PATH = plugins sample src test tools
+
 ifeq ($(shell uname),Darwin) # for macOS
 prefix ?= $(RIME_ROOT)/dist
 
@@ -37,6 +39,13 @@ install-debug uninstall-debug
 
 all: release
 
+clang-format-lint:
+	find ${RIME_SOURCE_PATH} \! -path 'plugins/*/*' -a \( -name '*.cc' -o -name '*.h' \) | \
+	xargs clang-format -Werror --dry-run || { echo Please lint your code by '"'"make clang-format-apply"'"'.; false; }
+
+clang-format-apply:
+	find ${RIME_SOURCE_PATH} \! -path 'plugins/*/*' -a \( -name '*.cc' -o -name '*.h' \) | xargs clang-format --verbose -i
+
 deps:
 	$(MAKE) -f deps.mk
 
@@ -44,7 +53,7 @@ deps/%:
 	$(MAKE) -f deps.mk $(@:deps/%=%)
 
 clean:
-	rm -Rf build debug
+	rm -r $(build) || true
 
 librime: release
 

@@ -46,8 +46,8 @@ void PluginManager::LoadPlugins(path plugins_dir) {
         DLOG(INFO) << "found plugin: " << plugin_file;
         string plugin_name = plugin_name_of(plugin_file);
         if (plugin_libs_.find(plugin_name) == plugin_libs_.end()) {
-          LOG(INFO) << "loading plugin '" << plugin_name
-                    << "' from " << plugin_file;
+          LOG(INFO) << "loading plugin '" << plugin_name << "' from "
+                    << plugin_file;
           try {
             auto plugin_lib = boost::dll::shared_library(plugin_file);
             plugin_libs_[plugin_name] = plugin_lib;
@@ -93,8 +93,35 @@ PluginManager& PluginManager::instance() {
 
 }  // namespace rime
 
+#ifdef _WIN32
+// TODO: implement this when ready to support DLL plugins on Windows.
+inline static rime::path current_module_path() {
+  return rime::path{};
+}
+#else
+#include <dlfcn.h>
+
+inline static rime::path symbol_location(const void* symbol) {
+  Dl_info info;
+  // Some of the libc headers miss `const` in `dladdr(const void*, Dl_info*)`
+  const int res = dladdr(const_cast<void*>(symbol), &info);
+  if (res) {
+    return rime::path{info.dli_fname};
+  } else {
+    return rime::path{};
+  }
+}
+
+inline static rime::path current_module_path() {
+  void rime_require_module_plugins();
+  return symbol_location(
+      reinterpret_cast<const void*>(&rime_require_module_plugins));
+}
+#endif
+
 static void rime_plugins_initialize() {
-  rime::PluginManager::instance().LoadPlugins(rime::path(RIME_PLUGINS_DIR));
+  rime::PluginManager::instance().LoadPlugins(
+      current_module_path().remove_filename() / RIME_PLUGINS_DIR);
 }
 
 static void rime_plugins_finalize() {}

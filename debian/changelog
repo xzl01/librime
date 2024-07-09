@@ -1,3 +1,19 @@
+librime (1.11.2+dfsg1-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Refresh plugin versions:
+    + lua: 20240519
+  * debian/librime1t64.shlibs: Bump minimum version to 1.11.2.
+
+ -- Boyuan Yang <byang@debian.org>  Sun, 07 Jul 2024 20:05:55 -0400
+
+librime (1.10.0+dfsg1-2) unstable; urgency=medium
+
+  [ Benjamin Drung ]
+  * Rename libraries for 64-bit time_t transition.  Closes: #1062609
+
+ -- Boyuan Yang <byang@debian.org>  Wed, 28 Feb 2024 18:52:08 -0500
+
 librime (1.10.0+dfsg1-1) unstable; urgency=medium
 
   * New upstream release.
