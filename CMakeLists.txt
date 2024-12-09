@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.12)
 project(rime)
 set(CMAKE_CXX_STANDARD 17)
 
-set(rime_version 1.11.2)
+set(rime_version 1.12.0)
 set(rime_soversion 1)
 
 add_definitions(-DRIME_VERSION="${rime_version}")
@@ -204,7 +204,7 @@ configure_file(
 add_custom_target(remove
   COMMAND ${CMAKE_COMMAND} -P ${CMAKE_CURRENT_BINARY_DIR}/cmake_uninstall.cmake)
 
-if(${CMAKE_SYSTEM_NAME} MATCHES "Linux|FreeBSD|DragonFly|GNU|Darwin" OR MINGW)
+if(${CMAKE_SYSTEM_NAME} MATCHES "Linux|FreeBSD|OpenBSD|DragonFly|GNU|Darwin" OR MINGW)
   set(prefix "${CMAKE_INSTALL_PREFIX}")
   set(exec_prefix "${CMAKE_INSTALL_PREFIX}")
   set(bindir "${CMAKE_INSTALL_FULL_BINDIR}")
@@ -224,6 +224,7 @@ install(FILES cmake/RimeConfig.cmake
   DESTINATION ${CMAKE_INSTALL_FULL_DATADIR}/cmake/rime)
 
 file(GLOB rime_public_header_files ${PROJECT_SOURCE_DIR}/src/*.h)
+list(FILTER rime_public_header_files EXCLUDE REGEX .*_impl\.h$)
 install(FILES ${rime_public_header_files}
   DESTINATION ${CMAKE_INSTALL_FULL_INCLUDEDIR})
 if(INSTALL_PRIVATE_HEADERS)
