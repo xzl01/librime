@@ -8,7 +8,7 @@ include /usr/share/dpkg/default.mk
 
 # For individual package versions
 REV_CHARCODE = 20240209
-REV_LUA = 20240519
+REV_LUA = 20241102
 REV_OCTAGRAM = 20240205
 
 _DEB_VERSION_REVISION = $(shell echo $(DEB_VERSION) | sed -e 's/^.*-//g')

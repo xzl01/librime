@@ -1,8 +1,31 @@
-librime (1.11.2+dfsg1-1deepin1) unstable; urgency=medium
+librime (1.12.0+dfsg1-1) unstable; urgency=medium
 
-  * Revert t64
+  * Upload to unstable.
 
- -- xiangzelong <xiangzelong@deepin.org>  Tue, 09 Jul 2024 10:46:16 +0800
+ -- Boyuan Yang <byang@debian.org>  Wed, 13 Nov 2024 22:30:42 -0500
+
+librime (1.12.0+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream release.
+  * Refresh plugin version:
+    + lua: 20241102
+  * debian/librime1t64.shlibs: Bump versions.
+
+ -- Boyuan Yang <byang@debian.org>  Wed, 13 Nov 2024 18:28:17 -0500
+
+librime (1.11.2+dfsg1-3) unstable; urgency=medium
+
+  * Rebuild against libopencc 1.1.9.
+
+ -- Boyuan Yang <byang@debian.org>  Thu, 15 Aug 2024 15:57:43 -0400
+
+librime (1.11.2+dfsg1-2) unstable; urgency=medium
+
+  * Rebuild against libopencc 1.1.8.
+  * debian/patches/0001-Use-googletest-lib-built-from-source.patch:
+    Mark the patch as Forwarded: not-needed.
+
+ -- Boyuan Yang <byang@debian.org>  Mon, 29 Jul 2024 15:45:22 -0400
 
 librime (1.11.2+dfsg1-1) unstable; urgency=medium
 
