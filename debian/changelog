@@ -1,8 +1,19 @@
-librime (1.12.0+dfsg1-1deepin1) unstable; urgency=medium
+librime (1.13.0+dfsg1-1) unstable; urgency=medium
 
-  * Revert t64.
+  * Upload to unstable.
 
- -- xiangzelong <xiangzelong@deepin.org>  Mon, 09 Dec 2024 10:15:27 +0800
+ -- Boyuan Yang <byang@debian.org>  Tue, 28 Jan 2025 09:40:56 -0500
+
+librime (1.13.0+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream release.
+  * Refresh plugin version:
+    + lua: 20241221.
+    + charcode: 20240319.
+    + octagram: 20241118.
+  * debian/librime1t64.shlibs: Bump versions.
+
+ -- Boyuan Yang <byang@debian.org>  Sat, 25 Jan 2025 17:13:27 -0500
 
 librime (1.12.0+dfsg1-1) unstable; urgency=medium
 
